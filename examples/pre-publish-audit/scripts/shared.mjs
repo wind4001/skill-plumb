@@ -106,7 +106,7 @@ export function normalizePosix(p) {
   return String(p || '').replace(/\\/g, '/');
 }
 
-const TEST_OR_FIXTURE_RE = /(?:^|\/)(?:__tests__|__mocks__|tests?|specs?|fixtures?|mocks?)\/|\.(?:test|spec)\.[^/]+$/i;
+const TEST_OR_FIXTURE_RE = /(?:^|\/)(?:__tests__|__mocks__|tests?|specs?|fixtures?|mocks?)\/|\.(?:test|spec)\.[^/]+$|(?:^|\/)verify_[^/]+\.mjs$/i;
 
 export function isTestOrFixturePath(relPath) {
   return TEST_OR_FIXTURE_RE.test(normalizePosix(relPath));

@@ -164,13 +164,26 @@ function auditComposeFile(relPath, lines, findings) {
   return { loopbackPorts, exposedPorts };
 }
 
+function stripCommentOutsideQuotes(line) {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === "'" && !inDouble) inSingle = !inSingle;
+    else if (ch === '"' && !inSingle && line[i - 1] !== '\\') inDouble = !inDouble;
+    else if (ch === '#' && !inSingle && !inDouble && (i === 0 || /\s/.test(line[i - 1]))) {
+      return line.slice(0, i);
+    }
+  }
+  return line;
+}
+
 function auditDefaultPasswords(relPath, lines, findings) {
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
     const trimmed = raw.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
-    // Strip inline comment outside quotes
-    const noComment = raw.replace(/\s+#.*$/, '');
+    const noComment = stripCommentOutsideQuotes(raw);
     const m = noComment.match(PASSWORD_KEY_RE);
     if (!m) continue;
     const varName = m[1];

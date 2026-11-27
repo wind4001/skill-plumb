@@ -60,12 +60,13 @@ const GENERIC_MCP_META = {
 };
 
 export function parseFrontmatter(raw) {
-  const fm = String(raw || '').match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const clean = String(raw || '').replace(/^\uFEFF/, '');
+  const fm = clean.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!fm) return { ok: false, name: null, description: '', domain: null, body: '' };
   const body = fm[1];
   const nameMatch = body.match(/^name\s*:\s*["']?([^\r\n"']+)/m);
-  const description = parseDescription(raw);
-  const domain = parseFrontmatterDomain(raw);
+  const description = parseDescription(clean);
+  const domain = parseFrontmatterDomain(clean);
   return {
     ok: true,
     name: nameMatch ? nameMatch[1].trim() : null,
@@ -76,20 +77,115 @@ export function parseFrontmatter(raw) {
 }
 
 export function parseDescription(raw) {
-  const fm = String(raw || '').match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const clean = String(raw || '').replace(/^\uFEFF/, '');
+  const fm = clean.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!fm) return '';
-  const body = fm[1];
-  const mBlock = body.match(/description:\s*[>|]-?\r?\n((?:[ \t]+.*\r?\n?)*)/);
-  const mQuoted = body.match(/description:\s*"((?:[^"\\]|\\.)*)"/);
-  const mSingleQ = body.match(/description:\s*'((?:[^'\\]|\\.)*)'/);
-  const mSingle = body.match(/description:\s*([^\r\n]+)/);
-  if (mQuoted) {
-    try { return JSON.parse('"' + mQuoted[1] + '"').trim(); } catch { return mQuoted[1].trim(); }
+  const fmLines = fm[1].split(/\r?\n/);
+
+  let startIdx = -1;
+  let rhs = '';
+  for (let i = 0; i < fmLines.length; i++) {
+    const m = fmLines[i].match(/^description\s*:\s*(.*)$/);
+    if (m) {
+      startIdx = i;
+      rhs = m[1];
+      break;
+    }
   }
-  if (mBlock) return mBlock[1].replace(/^[ \t]+/gm, '').replace(/\r?\n/g, ' ').trim();
-  if (mSingleQ) return mSingleQ[1].trim();
-  if (mSingle) return mSingle[1].trim();
-  return '';
+  if (startIdx < 0) return '';
+
+  const rhsTrimmed = rhs.trim();
+
+  // Block scalar (> / | with optional chomping +/- and indent digit)
+  if (/^[>|](?:[+-]?\d*|\d*[+-]?)\s*(?:#.*)?$/.test(rhsTrimmed)) {
+    const blockLines = [];
+    for (let i = startIdx + 1; i < fmLines.length; i++) {
+      const line = fmLines[i];
+      if (/^[ \t]*$/.test(line)) {
+        blockLines.push('');
+      } else if (/^[ \t]+/.test(line)) {
+        blockLines.push(line.replace(/^[ \t]+/, '').trimEnd());
+      } else {
+        break;
+      }
+    }
+    return blockLines.filter((l, idx, arr) => l !== '' || (idx > 0 && idx < arr.length - 1)).join(' ').replace(/\s+/g, ' ').trim();
+  }
+
+  // Quoted scalar ("..." or '...', single-line or multiline)
+  if (rhsTrimmed.startsWith('"') || rhsTrimmed.startsWith("'")) {
+    const quote = rhsTrimmed[0];
+    let combined = rhsTrimmed;
+    for (let i = startIdx + 1; i < fmLines.length; i++) {
+      if (quote === '"' && /^"(?:[^"\\]|\\.)*"(?:\s+#.*)?$/.test(combined)) break;
+      if (quote === "'" && /^'(?:[^']|'')*'(?:\s+#.*)?$/.test(combined)) break;
+      if (/^[^\s#][^:]*:/.test(fmLines[i])) break;
+      combined += ' ' + fmLines[i].trim();
+    }
+    if (quote === '"') {
+      const mq = combined.match(/^"((?:[^"\\]|\\.)*)"/);
+      if (mq) {
+        try { return JSON.parse('"' + mq[1] + '"').trim(); } catch { return mq[1].trim(); }
+      }
+    } else {
+      const ms = combined.match(/^'((?:[^']|'')*)'/);
+      if (ms) return ms[1].replace(/''/g, "'").trim();
+    }
+    return combined.slice(1).trim();
+  }
+
+  // Plain scalar with optional indented multiline continuations
+  const plainParts = rhsTrimmed ? [rhsTrimmed] : [];
+  for (let i = startIdx + 1; i < fmLines.length; i++) {
+    const line = fmLines[i];
+    if (/^[ \t]+\S/.test(line)) {
+      plainParts.push(line.trim());
+    } else {
+      break;
+    }
+  }
+  return plainParts.join(' ').trim();
+}
+
+export function extractRoutingClauses(desc) {
+  const text = String(desc || '').trim();
+  const useRe = /(?:^|[\s.;。；])(?:Use when|MUST USE|触发(?:方式|词|场景)*|何时用)[：:\s]*/i;
+  const notRe = /(?:^|[\s.;。；])(?:Not for|不用于|Don't use for|不适用于)[：:\s]*/i;
+  const uMatch = useRe.exec(text);
+  const nMatch = notRe.exec(text);
+
+  let useWhenRaw = '';
+  let notForRaw = '';
+  let purposeRaw = text;
+
+  if (uMatch && nMatch) {
+    if (uMatch.index < nMatch.index) {
+      purposeRaw = text.slice(0, nMatch.index).trim();
+      useWhenRaw = text.slice(uMatch.index + uMatch[0].length, nMatch.index).trim();
+      notForRaw = text.slice(nMatch.index + nMatch[0].length).trim();
+    } else {
+      notForRaw = text.slice(nMatch.index + nMatch[0].length, uMatch.index).trim();
+      useWhenRaw = text.slice(uMatch.index + uMatch[0].length).trim();
+      purposeRaw = [text.slice(0, nMatch.index).trim(), text.slice(uMatch.index).trim()].filter(Boolean).join(' ');
+    }
+  } else if (nMatch) {
+    purposeRaw = text.slice(0, nMatch.index).trim();
+    notForRaw = text.slice(nMatch.index + nMatch[0].length).trim();
+  } else if (uMatch) {
+    useWhenRaw = text.slice(uMatch.index + uMatch[0].length).trim();
+  }
+
+  const parsedNotFor = notForRaw
+    ? notForRaw.split(/[.;。；]/).map((s) => s.trim()).filter((s) => s.length >= 3)
+    : [];
+
+  return {
+    purpose: (purposeRaw || text).slice(0, 220),
+    useWhen: useWhenRaw ? useWhenRaw.split(/[。;\n]/)[0].trim() : (purposeRaw || text).slice(0, 160),
+    hasUseWhen: Boolean(uMatch && useWhenRaw.length >= 3),
+    notFor: parsedNotFor,
+    hasNotFor: parsedNotFor.length > 0,
+  };
 }
 
 function detectEntry(skillDir, name) {
@@ -117,17 +213,46 @@ export function resolveCatalogContext(opts = {}) {
   const explicitSkills = Array.isArray(opts.skillsDirs) && opts.skillsDirs.length > 0
     ? opts.skillsDirs
     : (opts.skillsDir ? [opts.skillsDir] : null);
+
+  let skillsDirError = null;
+  if (explicitSkills && !opts.allowMissingSkillsDir) {
+    for (const dir of explicitSkills) {
+      const abs = path.resolve(cwd, dir);
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) {
+        skillsDirError = `Skill directory not found: ${dir}`;
+        break;
+      }
+    }
+  }
+
   const skillDirs = discoverSkillDirs({ skillsDirs: explicitSkills, cwd });
   const mcpCfgPath = discoverMcpConfig({ mcpCfgPath: opts.mcpCfgPath, noMcp: opts.noMcp, cwd });
+  let mcpCfgError = null;
+  if (!opts.noMcp && typeof opts.mcpCfgPath === 'string') {
+    if (!opts.mcpCfgPath.trim()) {
+      mcpCfgError = 'MCP config file path cannot be empty';
+    } else if (!fs.existsSync(mcpCfgPath) || !fs.statSync(mcpCfgPath).isFile()) {
+      mcpCfgError = `MCP config file not found: ${opts.mcpCfgPath}`;
+    }
+  }
+
   const overridesPath = discoverOverridesPath({ overridesPath: opts.overridesPath, cwd });
-  const domainsRes = loadDomainsConfig(opts.domainsPath || null, cwd);
-  const overridesRes = loadOverrides(overridesPath, { explicit: Boolean(opts.overridesPath) });
+  let overridesDirError = null;
+  if (typeof opts.overridesPath === 'string' && !opts.overridesPath.trim()) {
+    overridesDirError = 'Overrides file path cannot be empty';
+  }
+  const domainsRes = loadDomainsConfig(opts.domainsPath !== undefined ? opts.domainsPath : null, cwd);
+  const overridesRes = overridesDirError
+    ? { ok: false, overrides: {}, warnings: [], error: overridesDirError, path: null }
+    : loadOverrides(overridesPath, { explicit: Boolean(opts.overridesPath) });
   const outFile = opts.outFile || defaultCachePath();
 
   return {
     cwd,
     skillDirs,
+    skillsDirError,
     mcpCfgPath,
+    mcpCfgError,
     overridesPath,
     outFile,
     domainsRes,
@@ -137,6 +262,12 @@ export function resolveCatalogContext(opts = {}) {
 
 export function buildLiveCatalog(opts = {}) {
   const ctx = resolveCatalogContext(opts);
+  if (ctx.skillsDirError) {
+    throw new Error(ctx.skillsDirError);
+  }
+  if (ctx.mcpCfgError) {
+    throw new Error(ctx.mcpCfgError);
+  }
   if (!ctx.domainsRes.ok) {
     throw new Error(ctx.domainsRes.error);
   }
@@ -152,17 +283,12 @@ export function buildLiveCatalog(opts = {}) {
   for (const sk of skillEntries) {
     const raw = fs.readFileSync(sk.mdPath, 'utf8');
     const desc = parseDescription(raw);
-    const notForMatch = desc.match(/(?:Not for|不用于|Don't use for|不适用于)[：:\s]*(.+)$/i);
-    const beforeNotFor = notForMatch ? desc.slice(0, notForMatch.index).trim() : desc;
-    const useWhenMatch = beforeNotFor.match(/(?:Use when|MUST USE|触发(?:方式|词|场景)*|当用户)[：:\s]*([^。;\n]+)/i);
-    const parsedNotFor = notForMatch
-      ? notForMatch[1].split(/[.;。；]/).map((s) => s.trim()).filter((s) => s.length >= 3)
-      : [];
+    const clauses = extractRoutingClauses(desc);
 
     const ovr = overrides[sk.name] || {};
     const fmDomain = parseFrontmatterDomain(raw);
-    const domain = ovr.domain || fmDomain || inferDomain(sk.name, beforeNotFor, domainsMap);
-    const mergedNotFor = [...new Set([...parsedNotFor, ...(ovr.not_for || [])])];
+    const domain = ovr.domain || fmDomain || inferDomain(sk.name, clauses.purpose, domainsMap);
+    const mergedNotFor = [...new Set([...clauses.notFor, ...(ovr.not_for || [])])];
     const mergedAka = [...new Set(ovr.aka || [])];
 
     const entryStr = detectEntry(sk.realDir, sk.name);
@@ -175,8 +301,8 @@ export function buildLiveCatalog(opts = {}) {
       name: sk.name,
       domain,
       kind: 'skill',
-      purpose: beforeNotFor.slice(0, 220),
-      use_when: useWhenMatch ? useWhenMatch[1].trim() : beforeNotFor.slice(0, 160),
+      purpose: clauses.purpose,
+      use_when: clauses.useWhen,
       not_for: mergedNotFor,
       aka: mergedAka,
       entry: entryStr,
@@ -234,12 +360,15 @@ export function buildLiveCatalog(opts = {}) {
 
 export function computeSourceFingerprint(opts = {}) {
   const ctx = resolveCatalogContext(opts);
-  const parts = [];
+  const parts = [`dirs:${ctx.skillDirs.join(',')}`];
   const skillEntries = collectSkillEntries(ctx.skillDirs);
   for (const sk of skillEntries) {
     try {
       const st = fs.statSync(sk.mdPath);
-      parts.push(`s:${sk.name}:${Math.trunc(st.mtimeMs)}:${st.size}`);
+      const entryStr = detectEntry(sk.realDir, sk.name);
+      const dirFiles = fs.readdirSync(sk.realDir);
+      const verifyFile = dirFiles.find((f) => /^verify_.*\.(mjs|js)$/.test(f)) || '';
+      parts.push(`s:${sk.name}:${Math.trunc(st.mtimeMs)}:${st.size}:e:${entryStr}:v:${verifyFile}`);
     } catch { /* ignore */ }
   }
   for (const [tag, p] of [['m', ctx.mcpCfgPath], ['o', ctx.overridesPath], ['d', ctx.domainsRes.configPath]]) {
@@ -334,6 +463,8 @@ export function syncLiveCatalog(opts = {}) {
 
 export function loadOrSyncCatalog(opts = {}) {
   const ctx = resolveCatalogContext(opts);
+  if (ctx.skillsDirError) throw new Error(ctx.skillsDirError);
+  if (ctx.mcpCfgError) throw new Error(ctx.mcpCfgError);
   if (!ctx.domainsRes.ok) throw new Error(ctx.domainsRes.error);
   if (!ctx.overridesRes.ok) throw new Error(ctx.overridesRes.error);
 
@@ -349,12 +480,17 @@ export function loadOrSyncCatalog(opts = {}) {
   }
 
   if (cachedFp === currentFp && fs.existsSync(outFile)) {
-    return {
-      catalog: JSON.parse(fs.readFileSync(outFile, 'utf8')),
-      domains: ctx.domainsRes.domains || DEFAULT_DOMAINS,
-      override_warnings: ctx.overridesRes.warnings || [],
-      auto_synced: false,
-    };
+    try {
+      const parsedCat = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+      if (Array.isArray(parsedCat)) {
+        return {
+          catalog: parsedCat,
+          domains: ctx.domainsRes.domains || DEFAULT_DOMAINS,
+          override_warnings: ctx.overridesRes.warnings || [],
+          auto_synced: false,
+        };
+      }
+    } catch { /* rebuild corrupted cache cleanly */ }
   }
 
   const synced = syncLiveCatalog(opts);
@@ -427,21 +563,23 @@ export function runInspect(query, opts = {}) {
     return { exitCode: 1, error: 'Provide a non-empty query string for inspect.' };
   }
   const { catalog: cat, domains, override_warnings, auto_synced } = loadOrSyncCatalog(opts);
-  const direct = detectDirectNoTool(q);
-  if (direct.isDirect) {
-    return {
-      exitCode: 0,
-      result: {
-        query: q,
-        auto_synced,
-        predicted: 'NONE',
-        direct_no_tool: true,
-        direct_reason: direct.reason,
-        ambiguous: false,
-        missing_not_for_warning: false,
-        override_warnings,
-      },
-    };
+  if (!opts.domain) {
+    const direct = detectDirectNoTool(q);
+    if (direct.isDirect) {
+      return {
+        exitCode: 0,
+        result: {
+          query: q,
+          auto_synced,
+          predicted: 'NONE',
+          direct_no_tool: true,
+          direct_reason: direct.reason,
+          ambiguous: false,
+          missing_not_for_warning: false,
+          override_warnings,
+        },
+      };
+    }
   }
 
   const scored = scoreTwoStage(cat, q, {
@@ -449,13 +587,16 @@ export function runInspect(query, opts = {}) {
     limit: opts.limit || 5,
     domains,
   });
+  if (scored.error) {
+    return { exitCode: 1, error: scored.error };
+  }
   const top1 = scored.top_k?.[0];
   const top2 = scored.top_k?.[1];
   const top1Missing = Boolean(top1 && (!top1.not_for || top1.not_for.length === 0));
   const top2Missing = Boolean(top2 && (!top2.not_for || top2.not_for.length === 0));
   const closeMargin = Boolean(top1 && top2 && top1.score > 0 && ((top1.score - top2.score) / top1.score) < 0.2);
 
-  const isAmbiguous = closeMargin && (top1Missing || top2Missing);
+  const isAmbiguous = scored.predicted !== 'NONE' && closeMargin && (top1Missing || top2Missing);
   const missingWarn = isAmbiguous || (scored.predicted !== 'NONE' && top1Missing);
 
   const outObj = {

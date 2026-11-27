@@ -89,7 +89,8 @@ export function collectSkillEntries(skillDirs) {
 
 export function discoverMcpConfig({ mcpCfgPath = undefined, noMcp = false, cwd = process.cwd() } = {}) {
   if (noMcp || mcpCfgPath === null) return null;
-  if (typeof mcpCfgPath === 'string' && mcpCfgPath.trim()) {
+  if (typeof mcpCfgPath === 'string') {
+    if (!mcpCfgPath.trim()) return '';
     return path.resolve(cwd, mcpCfgPath);
   }
 
@@ -114,7 +115,9 @@ export function discoverMcpConfig({ mcpCfgPath = undefined, noMcp = false, cwd =
 }
 
 export function discoverOverridesPath({ overridesPath = null, cwd = process.cwd() } = {}) {
-  if (overridesPath) return path.resolve(cwd, overridesPath);
+  if (typeof overridesPath === 'string') {
+    return overridesPath.trim() ? path.resolve(cwd, overridesPath) : '';
+  }
   const home = os.homedir();
   const candidates = [
     path.join(cwd, 'router_overrides.json'),
@@ -146,13 +149,24 @@ export function findExecutable(name) {
   return null;
 }
 
+function quoteWinCmdArg(arg) {
+  const s = String(arg);
+  if (s.length > 0 && !/[\s"&|<>^()!%]/.test(s)) return s;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
 /**
  * Safely execute binaries on Windows (wrapping `.cmd`/`.bat` shims via `cmd.exe /d /s /c`
- * to prevent Node 24+ `EINVAL` spawn errors).
+ * with outer-quoted command string and `windowsVerbatimArguments` so spaces in both
+ * binary path and arguments work reliably and avoid Node 24+ `EINVAL` spawn errors).
  */
 export function execSafe(bin, args = [], opts = {}) {
   if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(bin)) {
-    return execFileSync('cmd.exe', ['/d', '/s', '/c', bin, ...args], opts);
+    const cmdLine = [quoteWinCmdArg(bin), ...args.map(quoteWinCmdArg)].join(' ');
+    return execFileSync('cmd.exe', ['/d', '/s', '/c', `"${cmdLine}"`], {
+      ...opts,
+      windowsVerbatimArguments: true,
+    });
   }
   return execFileSync(bin, args, opts);
 }

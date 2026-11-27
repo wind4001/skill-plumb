@@ -17,6 +17,7 @@
     "bin/",
     "src/",
     "templates/",
+    "docs/",
     "README.md",
     "README.zh-CN.md",
     "LICENSE"

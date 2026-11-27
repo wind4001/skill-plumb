@@ -29,7 +29,10 @@ export function runScaffold(opts = {}) {
   if (!['full', 'lite', 'ops'].includes(mode)) {
     return { exitCode: 1, error: `--mode must be full | lite | ops (got ${mode})` };
   }
-  if (!opts.domain || !opts.summary) {
+  if (!opts.domain || !/^[a-z0-9][a-z0-9_-]{0,60}$/i.test(opts.domain)) {
+    return { exitCode: 1, error: 'Provide valid --domain <slug> (a-z0-9_-)' };
+  }
+  if (!opts.summary) {
     return { exitCode: 1, error: 'Both --domain and --summary are required' };
   }
 
@@ -43,6 +46,7 @@ export function runScaffold(opts = {}) {
       cwd: opts.cwd,
       skillsDirs: opts.skillsDirs,
       skillsDir: opts.skillsDir,
+      allowMissingSkillsDir: true,
       mcpCfgPath: opts.mcpCfgPath,
       noMcp: opts.noMcp,
       overridesPath: opts.overridesPath,
@@ -71,8 +75,9 @@ export function runScaffold(opts = {}) {
       : 'unrelated single-file literal edits or tasks covered by dedicated sibling skills');
 
   const scriptStem = opts.name.replace(/-/g, '_');
-  const outRoot = opts.outDir || path.join(opts.cwd || process.cwd(), '.agents', 'skills');
-  const targetDir = path.resolve(outRoot, opts.name);
+  const cwd = opts.cwd || process.cwd();
+  const outRoot = opts.outDir || path.join(cwd, '.agents', 'skills');
+  const targetDir = path.resolve(cwd, outRoot, opts.name);
   const absPosix = targetDir.replace(/\\/g, '/');
 
   if (!opts.dryRun && fs.existsSync(targetDir) && !opts.force) {

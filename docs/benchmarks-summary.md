@@ -61,3 +61,21 @@ All numbers below come from reproducible controlled evaluations run prior to ext
 * **Autonomous Authoring**: Generated `SKILL.md` (`30` lines, `2,192` bytes) + deterministic probe + verification suite in 22 planner turns (`337s`); passed `skill-plumb gate` and independent hidden `.env` vs `.env.example` fixtures (`0` clean, `1` error, `2` drift/placeholders) with **zero plaintext secret leakage**.
 * **Zero-Manual-Sync & Disambiguation**: Dropping in an overlapping third-party skill triggered `auto_synced: true` without running `sync`, flagged `crowded_missing_not_for` (`exit 2`), and emitted `ambiguous: true` + `recommended_action: "llm_disambiguate_top_candidates"` on an overlapping query (`13.75` vs `13.31`).
 * **Zero-Invasion Resolution**: Adding `not_for` + `aka` entries in `router_overrides.json` widened the score separation (`13.75` vs `7.92`, flipping `ambiguous` and `missing_not_for_warning` to `false`), cleanly routed all 3 sibling `deploy` skills to their respective intents, returned `sync exit 0` (`missing_not_for_count: 0`), and kept the third-party `SKILL.md` **SHA-256 byte-identical**.
+
+---
+
+## 4. Why Thin Contracts + Deterministic Probes Beat Both Long Prose and Heavy Wrappers
+
+Prior to building the CLI package, three generations of agent skill designs were tested in controlled paired evaluations across security audits, live database tuning, CI/CD configuration, and a 6,418-file TypeScript monorepo:
+
+1. **Prose vs. Tool-Boundary Secret Redaction**:
+   - In paired blind runs on a pre-publish audit task, traditional long-prose `SKILL.md` prompts leaked raw credentials into **75% (3/4)** of final reports despite explicit prose warnings.
+   - Moving scanning and redaction into deterministic zero-dependency scripts dropped raw credential leakage to **0%**.
+2. **Eliminating the "Black-Box Distrust Tax"**:
+   - An earlier heavy wrapper protocol enforced redaction, but caused strong models to spend **5–8 extra turns (~25,000 characters)** inspecting the wrapper's source code because they could not verify coverage scope, alongside a **7–11 command ceremony tax** on small tasks.
+   - Switching to transparent zero-dependency probes that emit explicit `calibration` counts (`files_scanned`, `tracked_files_count`, `local_links_checked`) and `scopes_skipped` eliminated the distrust tax while cutting `SKILL.md` size by **~87%** (`278–380` lines → `37–58` lines).
+3. **Cross-Domain Public-Repo Paired Benchmarks**:
+   - Across public security, live PostgreSQL 18, and CI/CD benchmarks, pairing a 1-page rule index with deterministic local probes reduced session wall-clock time by **11%–22%** and tool calls by **13%–40%**, while eliminating silent false negatives such as truncated GitHub API page-2 pagination, skipped repository privacy docs, and `git check-ignore` traps.
+4. **Negative Boundary Experiment (TDD Mechanical Gate)**:
+   - On a real Python TOML parser repository paired against a popular TDD skill, adding a mechanical script gate produced **zero measurable correctness gain** (`20/20` hidden acceptance tests passed on both arms) while coercing the agent's small red-green micro-cycles into coarser batches.
+   - **Conclusion**: Deterministic `0/1/2` probes belong on **high-entropy objective environment checks** (file trees, `.env` drift, schemas/EXPLAIN, dependency/security audits), NOT on pure coding-discipline or creative/stylistic skills (`--mode lite`).

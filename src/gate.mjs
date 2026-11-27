@@ -10,24 +10,100 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { buildLiveCatalog, parseDescription, syncLiveCatalog } from './catalog.mjs';
+import {
+  buildLiveCatalog,
+  extractRoutingClauses,
+  parseDescription,
+  syncLiveCatalog,
+} from './catalog.mjs';
 import { DEFAULT_DOMAINS, inferDomain, loadDomainsConfig, parseFrontmatterDomain } from './domains.mjs';
 import { scoreTwoStage } from './scorer.mjs';
 
 function isWithinRoot(rootReal, targetReal) {
   const rel = path.relative(rootReal, targetReal);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+}
+
+export function stripFencedCodeBlocks(raw) {
+  const clean = String(raw || '').replace(/^\uFEFF/, '');
+  const lines = clean.split(/\r?\n/);
+  const out = [];
+  let fenceChar = null;
+  let fenceMinLen = 0;
+
+  for (const line of lines) {
+    const openOrClose = line.match(/^\s*(`{3,}|~{3,})(.*)$/);
+    if (openOrClose) {
+      const marker = openOrClose[1];
+      const rest = openOrClose[2].trim();
+      if (!fenceChar) {
+        fenceChar = marker[0];
+        fenceMinLen = marker.length;
+        out.push('');
+        continue;
+      } else if (marker[0] === fenceChar && marker.length >= fenceMinLen && rest === '') {
+        fenceChar = null;
+        fenceMinLen = 0;
+        out.push('');
+        continue;
+      }
+    }
+    if (fenceChar) {
+      out.push('');
+    } else {
+      out.push(line.replace(/`+[^`\n]*`+/g, ''));
+    }
+  }
+  return out.join('\n');
+}
+
+export function measureSkillMarkdown(raw) {
+  const text = String(raw || '').replace(/^\uFEFF/, '');
+  const lines = text.split(/\r?\n/);
+  const bytes = Buffer.byteLength(text, 'utf8');
+  let fenceChar = null;
+  let fenceMinLen = 0;
+  let fenceLen = 0;
+  let maxFence = 0;
+  for (const l of lines) {
+    const m = l.match(/^\s*(`{3,}|~{3,})(.*)$/);
+    if (m) {
+      const marker = m[1];
+      const rest = m[2].trim();
+      if (!fenceChar) {
+        fenceChar = marker[0];
+        fenceMinLen = marker.length;
+        fenceLen = 0;
+        continue;
+      } else if (marker[0] === fenceChar && marker.length >= fenceMinLen && rest === '') {
+        if (fenceLen > maxFence) maxFence = fenceLen;
+        fenceChar = null;
+        fenceMinLen = 0;
+        continue;
+      }
+    }
+    if (fenceChar) {
+      fenceLen++;
+    }
+  }
+  if (fenceChar && fenceLen > maxFence) {
+    maxFence = fenceLen;
+  }
+  return { lines, lineCount: lines.length, bytes, maxFence };
 }
 
 function extractFrontmatter(raw, fallbackName) {
-  const fm = String(raw || '').match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!fm) return { ok: false, name: null, desc: '' };
+  const clean = String(raw || '').replace(/^\uFEFF/, '');
+  const fm = clean.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!fm) return { ok: false, hasName: false, name: null, desc: '' };
   const body = fm[1];
   const nameMatch = body.match(/^name\s*:\s*["']?([^\r\n"']+)/m);
-  const desc = parseDescription(raw);
+  const parsedName = nameMatch ? nameMatch[1].trim() : '';
+  const desc = parseDescription(clean);
   return {
     ok: true,
-    name: nameMatch ? nameMatch[1].trim() : fallbackName,
+    hasName: Boolean(parsedName),
+    name: parsedName || fallbackName,
     desc,
   };
 }
@@ -35,7 +111,7 @@ function extractFrontmatter(raw, fallbackName) {
 export function findHardcodedUserPaths(text) {
   const hits = [];
   const winRe = /[A-Za-z]:[/\\]Users[/\\]([^/\\\s"'`>]+)/gi;
-  const posixRe = /(?:^|[\s"'`(])(\/(?:Users|home)\/([a-zA-Z0-9._-]+)\/)/g;
+  const posixRe = /(?:^|[\s"'`(=])(\/(?:Users|home)\/([a-zA-Z0-9._-]+)\/)/g;
   const placeholders = new Set(['user', 'username', 'your-user', 'alice', 'bob', '<user>', '<username>', 'runner', 'ci']);
 
   for (const m of String(text || '').matchAll(winRe)) {
@@ -58,6 +134,9 @@ export function runGate(opts = {}) {
   const maxBytes = opts.maxBytes ?? 9000;
   const modeOpt = opts.mode || 'auto';
 
+  if (!['auto', 'full', 'lite'].includes(modeOpt)) {
+    return { exitCode: 1, error: `--mode must be auto | full | lite (got ${modeOpt})` };
+  }
   if (!opts.skillDir) {
     return { exitCode: 1, error: 'Provide exactly one <skill_dir> path' };
   }
@@ -81,41 +160,32 @@ export function runGate(opts = {}) {
 
   const failures = [];
   const rawMd = fs.readFileSync(mdPath, 'utf8');
-  const lines = rawMd.split(/\r?\n/);
-  const bytes = Buffer.byteLength(rawMd, 'utf8');
+  const { lineCount, bytes, maxFence } = measureSkillMarkdown(rawMd);
 
   // Gate 1: Frontmatter & Use when / Not for boundary
   const fm = extractFrontmatter(rawMd, path.basename(skillReal));
-  if (!fm.ok || !fm.name) {
+  if (!fm.ok || !fm.hasName) {
     failures.push({ gate: 'frontmatter', reason: 'Missing valid YAML frontmatter or `name:` field' });
   }
-  const hasUseWhen = /(?:Use when|MUST USE|触发(?:方式|词|场景)?|何时用)/i.test(fm.desc);
-  const notForMatch = fm.desc.match(/(?:Not for|不用于|Don't use for|不适用于)[：:\s]*(.+)$/i);
-  const hasNotFor = Boolean(notForMatch && notForMatch[1].trim().length >= 5);
-  if (!hasUseWhen) failures.push({ gate: 'frontmatter_boundary', reason: 'Description missing explicit `Use when` trigger conditions' });
-  if (!hasNotFor) failures.push({ gate: 'frontmatter_boundary', reason: 'Description missing explicit non-empty `Not for` exclusions' });
+  const clauses = extractRoutingClauses(fm.desc);
+  if (!clauses.hasUseWhen) failures.push({ gate: 'frontmatter_boundary', reason: 'Description missing explicit `Use when` trigger conditions' });
+  if (!clauses.hasNotFor) failures.push({ gate: 'frontmatter_boundary', reason: 'Description missing explicit non-empty `Not for` exclusions' });
 
   // Gate 2: Thinness & inline giant code dump check
-  if (lines.length > maxLines) failures.push({ gate: 'thinness', reason: `SKILL.md line count ${lines.length} exceeds limit ${maxLines}` });
+  if (lineCount > maxLines) failures.push({ gate: 'thinness', reason: `SKILL.md line count ${lineCount} exceeds limit ${maxLines}` });
   if (bytes > maxBytes) failures.push({ gate: 'thinness', reason: `SKILL.md byte size ${bytes} exceeds limit ${maxBytes}` });
-  let inFence = false;
-  let fenceLen = 0;
-  let maxFence = 0;
-  for (const l of lines) {
-    if (/^\s*```/.test(l)) {
-      if (!inFence) { inFence = true; fenceLen = 0; }
-      else { if (fenceLen > maxFence) maxFence = fenceLen; inFence = false; }
-    } else if (inFence) {
-      fenceLen++;
-    }
-  }
   if (maxFence > 35) failures.push({ gate: 'thinness', reason: `Found huge inline code block (${maxFence} lines > 35); move into scripts/ or references/` });
 
-  // Gate 3: Links & path hygiene
+  // Gate 3: Links & path hygiene (ignore links inside fenced code blocks / inline code)
   const linkErrors = [];
-  for (const m of rawMd.matchAll(/\[[^\]]+\]\(([^)#\s]+)(?:#[^)\s]*)?\)/g)) {
+  const strippedMd = stripFencedCodeBlocks(rawMd);
+  for (const m of strippedMd.matchAll(/\[[^\]]+\]\(([^)#\s]+)(?:#[^)\s]*)?\)/g)) {
     const target = m[1];
-    if (/^(?:https?:|mailto:|customization:|file:)/.test(target)) continue;
+    if (/^(?:https?:|mailto:|customization:)/.test(target)) continue;
+    if (/^file:/i.test(target)) {
+      linkErrors.push(`Local file:// link disallowed: ${target}`);
+      continue;
+    }
     const resolved = path.resolve(skillReal, target);
     if (!fs.existsSync(resolved)) {
       linkErrors.push(`Missing link target: ${target}`);
@@ -137,7 +207,7 @@ export function runGate(opts = {}) {
   // Gate 4: Scripts & Verify execution
   const scriptsDir = path.join(skillReal, 'scripts');
   const scriptFiles = fs.existsSync(scriptsDir)
-    ? fs.readdirSync(scriptsDir).filter((f) => /^(?:probe|preflight)_.*\.mjs$/i.test(f))
+    ? fs.readdirSync(scriptsDir).filter((f) => /^(?:probe|preflight)_.*\.mjs$|^(?:eval|audit)_all\.mjs$/i.test(f))
     : [];
   const verifyFiles = fs.readdirSync(skillReal).filter((f) => /^verify_.*\.mjs$/i.test(f));
   const detectedMode = modeOpt === 'auto'
@@ -153,16 +223,21 @@ export function runGate(opts = {}) {
     for (const sf of scriptFiles) {
       const sp = path.join(scriptsDir, sf);
       try {
-        execFileSync('node', [sp, '--help'], { encoding: 'utf8', timeout: 8000 });
+        execFileSync(process.execPath, [sp, '--help'], { encoding: 'utf8', timeout: 8000, stdio: 'pipe' });
         probeResults.push({ script: sf, help_exit: 0 });
       } catch (e) {
-        failures.push({ gate: 'probe_cli', reason: `${sf} --help failed (exit ${e.status})` });
+        failures.push({ gate: 'probe_cli', reason: `${sf} --help failed (exit ${e.status ?? e.signal ?? 'error'})` });
       }
       try {
-        execFileSync('node', [sp, '--bogus-d-gate-flag'], { encoding: 'utf8', timeout: 8000, stdio: 'pipe' });
+        execFileSync(process.execPath, [sp, '--bogus-d-gate-flag'], { encoding: 'utf8', timeout: 8000, stdio: 'pipe' });
         failures.push({ gate: 'probe_cli', reason: `${sf} failed to reject unknown flag with exit != 0` });
       } catch (e) {
-        if ((e.status ?? 1) !== 1) failures.push({ gate: 'probe_cli', reason: `${sf} rejected unknown flag with exit ${e.status}, expected 1` });
+        if (e.signal || e.status !== 1) {
+          failures.push({
+            gate: 'probe_cli',
+            reason: `${sf} rejected unknown flag with exit ${e.status ?? 'null'}${e.signal ? ` (signal ${e.signal})` : ''}, expected 1`,
+          });
+        }
       }
     }
 
@@ -170,10 +245,10 @@ export function runGate(opts = {}) {
       for (const vf of verifyFiles) {
         const vp = path.join(skillReal, vf);
         try {
-          const vOut = execFileSync('node', [vp], { encoding: 'utf8', timeout: 30000 });
+          const vOut = execFileSync(process.execPath, [vp], { encoding: 'utf8', timeout: 30000, stdio: 'pipe' });
           verifyResults.push({ file: vf, status: 'PASS', summary: vOut.trim().split(/\r?\n/).pop() });
         } catch (e) {
-          failures.push({ gate: 'verify_suite', reason: `${vf} failed (exit ${e.status}): ${String(e.stderr || e.stdout || e.message).slice(0, 200)}` });
+          failures.push({ gate: 'verify_suite', reason: `${vf} failed (exit ${e.status ?? e.signal ?? 'error'}): ${String(e.stderr || e.stdout || e.message).slice(0, 200)}` });
         }
       }
     }
@@ -185,7 +260,7 @@ export function runGate(opts = {}) {
     let live = [];
     let domainsMap = DEFAULT_DOMAINS;
     try {
-      const domRes = loadDomainsConfig(opts.domainsPath || null, opts.cwd || process.cwd());
+      const domRes = loadDomainsConfig(opts.domainsPath !== undefined ? opts.domainsPath : null, opts.cwd || process.cwd());
       if (!domRes.ok) return { exitCode: 1, error: domRes.error };
       domainsMap = domRes.domains;
       live = buildLiveCatalog({
@@ -203,15 +278,15 @@ export function runGate(opts = {}) {
 
     const withoutSelf = live.filter((x) => x.name !== fm.name);
     const fmDomain = parseFrontmatterDomain(rawMd);
-    const domain = fmDomain || (live.find((x) => x.name === fm.name)?.domain) || inferDomain(fm.name, fm.desc, domainsMap);
+    const domain = fmDomain || (live.find((x) => x.name === fm.name)?.domain) || inferDomain(fm.name, clauses.purpose, domainsMap);
     const syntheticSelf = {
       id: `${domain}/${fm.name}`,
       name: fm.name,
       domain,
       kind: 'skill',
-      purpose: fm.desc.slice(0, 180),
-      use_when: fm.desc.slice(0, 140),
-      not_for: notForMatch ? notForMatch[1].split(/[.;。；]/).map((s) => s.trim()).filter((s) => s.length >= 3) : [],
+      purpose: clauses.purpose,
+      use_when: clauses.useWhen,
+      not_for: clauses.notFor,
       aka: [fm.name],
       entry: `skill:${fm.name}`,
     };
@@ -224,18 +299,27 @@ export function runGate(opts = {}) {
     }
   }
 
-  // Gate 6: Optional mirror symlink parity check (only when explicitly requested or mirror root already exists)
+  // Gate 6: Opt-in mirror symlink parity check (--check-mirror <dir>)
   const globalSkillsPath = path.join(os.homedir(), '.agents', 'skills');
   const globalSkillsRoot = fs.existsSync(globalSkillsPath) ? fs.realpathSync(globalSkillsPath) : null;
-  const mirrorRoot = opts.checkMirror || path.join(os.homedir(), '.gemini', 'config', 'skills');
-  let symlinkCheck = { checked: false };
   const insideGlobal = Boolean(globalSkillsRoot && isWithinRoot(globalSkillsRoot, skillReal));
-  if (opts.checkMirror || (insideGlobal && fs.existsSync(mirrorRoot))) {
+  let symlinkCheck = { checked: false };
+  if (opts.checkMirror) {
+    const mirrorRoot = path.resolve(opts.cwd || process.cwd(), opts.checkMirror);
     const mirror = path.join(mirrorRoot, path.basename(skillReal));
     const exists = fs.existsSync(mirror);
-    symlinkCheck = { checked: true, mirror_exists: exists, mirror_path: mirror };
-    if (!exists) {
-      failures.push({ gate: 'symlink_parity', reason: `Missing mirror symlink at ${mirror}` });
+    let pointsToSkill = false;
+    if (exists) {
+      try {
+        pointsToSkill = fs.realpathSync(mirror) === skillReal;
+      } catch { pointsToSkill = false; }
+    }
+    symlinkCheck = { checked: true, mirror_exists: exists, points_to_skill: pointsToSkill, mirror_path: mirror };
+    if (!exists || !pointsToSkill) {
+      failures.push({
+        gate: 'symlink_parity',
+        reason: !exists ? `Missing mirror symlink at ${mirror}` : `Mirror ${mirror} does not resolve to ${skillReal}`,
+      });
     }
   }
 
@@ -264,7 +348,7 @@ export function runGate(opts = {}) {
       name: fm.name,
       mode: detectedMode,
       skill_dir: skillReal,
-      metrics: { lines: lines.length, bytes, max_inline_code_fence: maxFence },
+      metrics: { lines: lineCount, bytes, max_inline_code_fence: maxFence },
       probes_checked: probeResults,
       verify_results: verifyResults,
       routing_smoke: routingCheck,

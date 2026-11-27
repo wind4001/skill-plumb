@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Deterministic probe template for `{{SLUG}}` (`probe_{{SCRIPT_STEM}}.mjs`).
- * Enforces: strict CLI arg validation, realpath containment, secret redaction, 0/1/2 exit codes.
+ * Enforces: strict CLI arg validation, realpath containment, secret redaction,
+ * calibration + coverage reporting, and 0/1/2 exit codes.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 function isWithinRoot(rootReal, targetReal) {
   const rel = path.relative(rootReal, targetReal);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
 }
 
 function redactSecrets(text) {
@@ -24,9 +25,15 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--help' || a === '-h') opts.help = true;
     else if (a === '--target' || a === '--out') {
-      if (i + 1 >= argv.length || argv[i + 1].startsWith('--')) return { ok: false, error: `Missing value for ${a}` };
+      if (i + 1 >= argv.length || argv[i + 1].startsWith('-')) return { ok: false, error: `Missing value for ${a}` };
       if (a === '--target') opts.target = argv[++i];
       else opts.out = argv[++i];
+    } else if (a.startsWith('--target=') || a.startsWith('--out=')) {
+      const eq = a.indexOf('=');
+      const val = a.slice(eq + 1);
+      if (!val) return { ok: false, error: `Missing value for ${a.slice(0, eq)}` };
+      if (a.startsWith('--target=')) opts.target = val;
+      else opts.out = val;
     } else if (a.startsWith('-')) {
       return { ok: false, error: `Unknown flag: ${a}` };
     } else {
@@ -43,9 +50,9 @@ function printHelp() {
   node probe_{{SCRIPT_STEM}}.mjs [<target_dir>] [--target <dir>] [--out <report.json>]
 
 Exit codes:
-  0 = clean / ready
-  1 = invalid CLI args, missing target, or symlink escape
-  2 = blocking findings or incomplete prerequisites`);
+  0 = clean / ready (all requested scopes completed)
+  1 = invalid CLI args, missing target, or symlink escape (writes zero --out files)
+  2 = blocking findings or incomplete coverage (scopes_skipped / skipped non-empty)`);
 }
 
 export function runProbe(rawTarget) {
@@ -53,15 +60,26 @@ export function runProbe(rawTarget) {
   if (!fs.existsSync(abs)) return { exitCode: 1, error: `Target not found: ${rawTarget}` };
   const rootReal = fs.realpathSync(abs);
   const findings = [];
+  const scopesChecked = ['target'];
+  const scopesSkipped = [];
+  const skipped = [];
+
   // Add deterministic checks using isWithinRoot(rootReal, ...) and redactSecrets(...)
-  const exitCode = findings.length > 0 ? 2 : 0;
+  const incomplete = scopesSkipped.length > 0 || skipped.length > 0;
+  const exitCode = findings.length > 0 || incomplete ? 2 : 0;
   return {
     exitCode,
     result: {
       scan_completed: true,
       exit_code: exitCode,
-      exit_meaning: exitCode === 0 ? 'ready_or_clean' : 'findings_or_gaps',
+      exit_meaning: exitCode === 0 ? 'ready_or_clean' : 'findings_or_incomplete_coverage',
       target: rootReal,
+      calibration: {
+        targets_checked: 1,
+      },
+      scopes_checked: scopesChecked,
+      scopes_skipped: scopesSkipped,
+      skipped,
       findings: findings.map((f) => ({ ...f, detail: redactSecrets(f.detail || '') })),
     },
   };
@@ -70,7 +88,7 @@ export function runProbe(rawTarget) {
 if (path.resolve(process.argv[1] || '') === path.resolve(fileURLToPath(import.meta.url))) {
   const parsed = parseArgs(process.argv.slice(2));
   if (!parsed.ok) {
-    console.error(JSON.stringify({ exit_code: 1, error: parsed.error }));
+    process.stderr.write(JSON.stringify({ scan_completed: false, exit_code: 1, error: parsed.error }, null, 2) + '\n');
     process.exit(1);
   }
   if (parsed.opts.help) {
@@ -78,11 +96,16 @@ if (path.resolve(process.argv[1] || '') === path.resolve(fileURLToPath(import.me
     process.exit(0);
   }
   const out = runProbe(parsed.opts.target);
-  const payload = out.exitCode === 1 && !out.result
-    ? { scan_completed: false, exit_code: 1, error: out.error }
-    : out.result;
-  const serialized = JSON.stringify(payload, null, 2) + '\n';
-  if (parsed.opts.out) fs.writeFileSync(parsed.opts.out, serialized, 'utf8');
+  if (out.exitCode === 1 && !out.result) {
+    process.stderr.write(JSON.stringify({ scan_completed: false, exit_code: 1, error: out.error }, null, 2) + '\n');
+    process.exit(1);
+  }
+  const serialized = JSON.stringify(out.result, null, 2) + '\n';
+  if (parsed.opts.out) {
+    const outAbs = path.resolve(parsed.opts.out);
+    fs.mkdirSync(path.dirname(outAbs), { recursive: true });
+    fs.writeFileSync(outAbs, serialized, 'utf8');
+  }
   process.stdout.write(serialized);
   process.exit(out.exitCode);
 }

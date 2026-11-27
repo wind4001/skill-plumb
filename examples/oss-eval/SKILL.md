@@ -14,9 +14,9 @@ description: >-
 
 | 命令 | 检查范围 |
 |---|---|
-| `node scripts/eval_all.mjs <目录或GitHub根URL> [--workdir <目录>] [--repo owner/repo] [--api-base <URL>] [--offline] [--api-only \| --no-clone] [--out <json>]` | 汇总以下三项；传 `--out` 时落盘完整 JSON 并输出精简摘要与 `file:line` 指针（推荐）；大型官仓或仅给 URL 快速初筛时优先加 `--api-only`（不克隆，仅拉 GitHub API 与远程 README，返回退出码 `2` 并须在结论标明本地源码未扫）；`--offline` 禁止联网克隆 |
-| `node scripts/audit_install.mjs <目录>` | 安装脚本/hooks/插件清单、宿主配置写入或卸载复活痕迹、`package.json` 生命周期、许可证 |
-| `node scripts/audit_network_deps.mjs <目录>` | 遥测与更新检查信号、外联代码域名对照根/子包 README 与文档披露、声明与导入依赖重量（Node/Python，含静态引用与真实路径防逃逸） |
+| `node scripts/eval_all.mjs <目录或GitHub根URL> [--workdir <目录>] [--repo owner/repo] [--api-base <URL>] [--offline] [--api-only \| --no-clone] [--out <json>]` | 汇总以下三项；传 `--out` 时落盘完整 JSON 并输出精简摘要与 `file:line` 指针（推荐）；未传 `--workdir` 克隆 GitHub URL 时会在系统临时目录保留浅克隆副本供人工核验；大型官仓或仅给 URL 快速初筛时优先加 `--api-only`（不克隆，仅拉 GitHub API 与远程 README，返回退出码 `2` 并须在结论标明本地源码未扫）；`--offline` 禁止联网克隆 |
+| `node scripts/audit_install.mjs <目录> [--out <json>]` | 安装脚本/hooks/插件清单、宿主配置写入或卸载复活痕迹、`package.json` 生命周期、许可证 |
+| `node scripts/audit_network_deps.mjs <目录> [--out <json>]` | 遥测与更新检查信号、外联代码域名对照根/子包 README 与文档披露、声明与导入依赖重量（Node/Python，含静态引用与真实路径防逃逸） |
 | `node scripts/audit_activity_claims.mjs <目录> [--repo owner/repo] [--api-base <URL>] [--offline]` | 人类 vs 机器人提交、README 徽章/`href="#"`/工作流、可选 GitHub API（`.subscribers_count` 基线 0.37%–0.86%、`full_name` 规范名核对、逐端点状态与翻页截断标记） |
 
 退出码：`0` = 所请求范围全部完成（**仍须核对 `repo_identity`、`findings`、截断标记 `*_truncated` 与关键源码**）；`2` = 覆盖不完整（分别写入 API/身份缺口 `scopes_skipped` 与本地跳过文件 `skipped`，含 `sample_complete: false` / `zero_external_runtime_deps: null`，绝不把未知当成零或凭空填缝）；`1` = 参数错误、执行失败或仓库身份冲突。

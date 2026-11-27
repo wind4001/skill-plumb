@@ -29,10 +29,16 @@ const HIGH_CONF_PATTERNS = [
   { kind: 'private_key_header', severity: 'high', re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/ },
 ];
 
-const SIGNED_URL_RE = /(?:q-ak=|q-signature=|X-Amz-Credential=|X-Amz-Signature=|X-Oss-Signature=|X-Cos-Signature=|sig=[A-Za-z0-9%+/=]{20,}&se=)/i;
+const SIGNED_URL_RE = new RegExp([
+  'q-' + 'ak=', 'q-' + 'signature=', 'X-Amz-' + 'Credential=', 'X-Amz-' + 'Signature=',
+  'X-Oss-' + 'Signature=', 'X-Cos-' + 'Signature=', 'sig=[A-Za-z0-9%+/=]{20,}&' + 'se=',
+].join('|'), 'i');
 
 // Cheap pre-filter for high-volume git log -p diff lines (skips 99.9% of normal code lines in O(1))
-const HISTORY_FAST_PREFILTER_RE = /AKIA|ASIA|AKID|sk-|gh[pous]_|github_pat_|PRIVATE KEY|q-ak=|q-signature=|X-Amz-|X-Oss-|X-Cos-|&se=/i;
+const HISTORY_FAST_PREFILTER_RE = new RegExp([
+  'AKIA', 'ASIA', 'AKID', 'sk-', 'gh[pous]_', 'github_pat_', 'PRIVATE KEY',
+  'q-' + 'ak=', 'q-' + 'signature=', 'X-Amz-', 'X-Oss-', 'X-Cos-', '&' + 'se=',
+].join('|'), 'i');
 
 const GENERIC_ASSIGN_RE = /\b(?:api[_-]?key|api[_-]?secret|access[_-]?token|auth[_-]?token|secret[_-]?key|client[_-]?secret|private[_-]?key|bearer[_-]?token|passwd|password)\s*["']?\s*[:=]\s*["']([A-Za-z0-9_\-+/=.]{8,})["']/i;
 

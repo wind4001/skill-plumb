@@ -21,12 +21,23 @@ function runProbe(args) {
   }
 }
 
+function quoteWinCmdArg(arg) {
+  const s = String(arg);
+  if (s.length > 0 && !/[\s"&|<>^()!%]/.test(s)) return s;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
 function runCli(cliPath, args) {
   if (cliPath.endsWith('.mjs') || cliPath.endsWith('.js')) {
-    return execFileSync('node', [cliPath, ...args], { encoding: 'utf8', timeout: 15000 });
+    return execFileSync(process.execPath, [cliPath, ...args], { encoding: 'utf8', timeout: 15000 });
   }
   if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(cliPath)) {
-    return execFileSync('cmd.exe', ['/d', '/s', '/c', cliPath, ...args], { encoding: 'utf8', timeout: 15000 });
+    const cmdLine = [quoteWinCmdArg(cliPath), ...args.map(quoteWinCmdArg)].join(' ');
+    return execFileSync('cmd.exe', ['/d', '/s', '/c', `"${cmdLine}"`], {
+      encoding: 'utf8',
+      timeout: 15000,
+      windowsVerbatimArguments: true,
+    });
   }
   return execFileSync(cliPath, args, { encoding: 'utf8', timeout: 15000 });
 }

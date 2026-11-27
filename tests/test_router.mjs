@@ -6,8 +6,10 @@ import path from 'node:path';
 import {
   buildLiveCatalog,
   detectDirectNoTool,
+  execSafe,
   loadDomainsConfig,
   loadOrSyncCatalog,
+  parseDescription,
   runInspect,
   scoreTwoStage,
   syncLiveCatalog,
@@ -203,7 +205,103 @@ try {
   const mlItem = multiCat.find((x) => x.name === 'ml-lora-tune');
   assert.equal(mlItem?.domain, 'ml_ops');
 
-  console.log('test_router.mjs PASSED (7/7)');
+  // 8. Custom domain priority beats built-in domains when both match
+  const prioDomFile = path.join(tmp, 'prio_domains.json');
+  fs.writeFileSync(prioDomFile, JSON.stringify({
+    domains: {
+      ml_sec: {
+        brief: 'ML security & model adversarial defense',
+        priors: 'pytorch adversarial security',
+        namePatterns: ['^ml-'],
+        textPatterns: ['\\badversarial\\b'],
+      },
+    },
+  }, null, 2));
+  const prioSkills = path.join(tmp, 'prio-skills');
+  fs.mkdirSync(path.join(prioSkills, 'ml-guard'), { recursive: true });
+  fs.writeFileSync(
+    path.join(prioSkills, 'ml-guard', 'SKILL.md'),
+    '---\nname: ml-guard\ndescription: "Adversarial security check. Use when auditing security. Not for SQL."\n---\n# Guard\n'
+  );
+  const prioCat = buildLiveCatalog({ skillsDirs: [prioSkills], noMcp: true, domainsPath: prioDomFile });
+  assert.equal(prioCat[0].domain, 'ml_sec');
+
+  // 9. Invalid regex in domains.json returns { ok: false } instead of crashing
+  const badDomFile = path.join(tmp, 'bad_domains.json');
+  fs.writeFileSync(badDomFile, JSON.stringify({
+    domains: { broken: { namePatterns: ['['] } },
+  }, null, 2));
+  const badDomRes = loadDomainsConfig(badDomFile, tmp);
+  assert.equal(badDomRes.ok, false);
+  assert.match(badDomRes.error, /Invalid regex/);
+
+  // 10. Explicit nonexistent --mcp-cfg throws cleanly
+  assert.throws(
+    () => buildLiveCatalog({ skillsDirs: [skillsDir], mcpCfgPath: path.join(tmp, 'missing-mcp.json') }),
+    /MCP config file not found/
+  );
+
+  // 11. UTF-8 BOM, multiline block scalar with blank line, plain continuation, Not-for before Use-when
+  const bomSkillMd = '\uFEFF---\nname: bom-skill\nx-domain: db\ndescription: >-\n  Audit Postgres tables.\n\n  Not for Docker deploy.\n  Use when checking Postgres indexes.\n---\n';
+  const parsedBomDesc = parseDescription(bomSkillMd);
+  assert.match(parsedBomDesc, /Audit Postgres tables\./);
+  assert.match(parsedBomDesc, /Use when checking Postgres indexes\./);
+  const bomDir = path.join(tmp, 'bom-skills');
+  fs.mkdirSync(path.join(bomDir, 'bom-skill'), { recursive: true });
+  fs.writeFileSync(path.join(bomDir, 'bom-skill', 'SKILL.md'), bomSkillMd);
+  const bomCat = buildLiveCatalog({ skillsDirs: [bomDir], noMcp: true });
+  assert.equal(bomCat[0].domain, 'db');
+  assert.match(bomCat[0].use_when, /checking Postgres indexes/);
+  assert.deepEqual(bomCat[0].not_for, ['Docker deploy']);
+
+  const plainMultiline = '---\nname: plain-ml\ndescription: First line\n  second line continuation.\n---\n';
+  assert.equal(parseDescription(plainMultiline), 'First line second line continuation.');
+
+  // 12. Fingerprint tracks scripts/probe_*.mjs additions & recovers corrupt cache JSON
+  const fpCatFile = path.join(tmp, 'fp_cat.json');
+  const fpOpts = { skillsDirs: [bomDir], noMcp: true, outFile: fpCatFile };
+  const fp1 = loadOrSyncCatalog(fpOpts);
+  assert.equal(fp1.auto_synced, true);
+  fs.mkdirSync(path.join(bomDir, 'bom-skill', 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(bomDir, 'bom-skill', 'scripts', 'probe_bom_skill.mjs'), '// probe\n');
+  const fp2 = loadOrSyncCatalog(fpOpts);
+  assert.equal(fp2.auto_synced, true);
+  assert.match(fp2.catalog[0].entry, /probe_bom_skill\.mjs/);
+
+  fs.writeFileSync(fpCatFile, '{corrupt json', 'utf8');
+  const fp3 = loadOrSyncCatalog(fpOpts);
+  assert.equal(fp3.auto_synced, true);
+  assert.equal(fp3.catalog.length, 1);
+
+  // 13. inspect --domain validation, NONE non-ambiguous, and tightened simpleReadOrStatus guard
+  const badDomInspect = runInspect('anything', { ...fpOpts, domain: 'nonexistent-domain' });
+  assert.equal(badDomInspect.exitCode, 1);
+  const explicitDomInspect = runInspect('just read postgres indexes', { ...fpOpts, domain: 'db' });
+  assert.equal(explicitDomInspect.exitCode, 0);
+  assert.equal(explicitDomInspect.result.direct_no_tool, false);
+  assert.equal(explicitDomInspect.result.predicted, 'db/bom-skill');
+
+  assert.equal(detectDirectNoTool('check git log for bot commits').isDirect, false);
+  assert.equal(detectDirectNoTool('check package.json lifecycle scripts').isDirect, false);
+
+  const lowScorePair = [
+    { id: 'db/a', name: 'a', domain: 'db', kind: 'skill', purpose: 'alpha', use_when: 'alpha', not_for: [], aka: [], entry: 'skill:a' },
+    { id: 'db/b', name: 'b', domain: 'db', kind: 'skill', purpose: 'beta', use_when: 'beta', not_for: [], aka: [], entry: 'skill:b' },
+  ];
+  const lowIns = scoreTwoStage(lowScorePair, 'completely unrelated zzz');
+  assert.equal(lowIns.predicted, 'NONE');
+
+  // 14. Windows execSafe handles spaces in BOTH .cmd path and arguments
+  if (process.platform === 'win32') {
+    const cmdDir = path.join(tmp, 'bin with spaces');
+    fs.mkdirSync(cmdDir, { recursive: true });
+    const cmdFile = path.join(cmdDir, 'my tool.cmd');
+    fs.writeFileSync(cmdFile, '@echo off\r\necho %~1^|%~2\r\n', 'utf8');
+    const cmdOut = execSafe(cmdFile, ['hello world', 'second arg'], { encoding: 'utf8' }).trim();
+    assert.equal(cmdOut, 'hello world|second arg');
+  }
+
+  console.log('test_router.mjs PASSED (14/14)');
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }

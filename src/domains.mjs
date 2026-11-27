@@ -80,17 +80,24 @@ export const DEFAULT_DOMAINS = {
   },
 };
 
-function compilePatternList(rawList) {
-  if (!Array.isArray(rawList)) return [];
+function compilePatternList(rawList, fieldName, configPath) {
+  if (rawList === undefined) return { ok: true, patterns: [] };
+  if (!Array.isArray(rawList)) {
+    return { ok: false, error: `Invalid "${fieldName}" in ${configPath}: expected an array of regex strings` };
+  }
   const out = [];
   for (const item of rawList) {
     if (item instanceof RegExp) {
       out.push(item);
     } else if (typeof item === 'string' && item.trim()) {
-      out.push(new RegExp(item.trim(), 'i'));
+      try {
+        out.push(new RegExp(item.trim(), 'i'));
+      } catch (err) {
+        return { ok: false, error: `Invalid regex "${item}" in "${fieldName}" (${configPath}): ${err.message}` };
+      }
     }
   }
-  return out;
+  return { ok: true, patterns: out };
 }
 
 function cloneDefaultDomains() {
@@ -110,9 +117,12 @@ export function loadDomainsConfig(configPath = null, cwd = process.cwd()) {
   const domains = cloneDefaultDomains();
   let resolvedPath = null;
 
-  if (configPath) {
+  if (configPath !== null && configPath !== undefined) {
+    if (typeof configPath !== 'string' || !configPath.trim()) {
+      return { ok: false, domains, configPath: null, error: 'Domains config path must be a non-empty file path' };
+    }
     resolvedPath = path.resolve(cwd, configPath);
-    if (!fs.existsSync(resolvedPath)) {
+    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
       return { ok: false, domains, configPath: resolvedPath, error: `Domains config not found: ${configPath}` };
     }
   } else {
@@ -148,28 +158,46 @@ export function loadDomainsConfig(configPath = null, cwd = process.cwd()) {
     return { ok: false, domains, configPath: resolvedPath, error: `Domains config must be an object: ${resolvedPath}` };
   }
 
+  const customKeys = [];
   for (const [domName, def] of Object.entries(section)) {
     if (domName.startsWith('_') || domName === '$schema') continue;
+    customKeys.push(domName);
     if (typeof def === 'string') {
       const existing = domains[domName] || { brief: '', priors: '', namePatterns: [], textPatterns: [] };
       domains[domName] = { ...existing, brief: def };
       continue;
     }
     if (!def || typeof def !== 'object') continue;
+    const nameRes = compilePatternList(def.namePatterns ?? def.name_patterns, `${domName}.namePatterns`, resolvedPath);
+    if (!nameRes.ok) return { ok: false, domains, configPath: resolvedPath, error: nameRes.error };
+    const textRes = compilePatternList(def.textPatterns ?? def.text_patterns, `${domName}.textPatterns`, resolvedPath);
+    if (!textRes.ok) return { ok: false, domains, configPath: resolvedPath, error: textRes.error };
+
     const existing = domains[domName] || { brief: domName, priors: '', namePatterns: [], textPatterns: [] };
     domains[domName] = {
       brief: typeof def.brief === 'string' ? def.brief : existing.brief,
       priors: typeof def.priors === 'string' ? `${existing.priors} ${def.priors}`.trim() : existing.priors,
-      namePatterns: [...compilePatternList(def.namePatterns || def.name_patterns), ...existing.namePatterns],
-      textPatterns: [...compilePatternList(def.textPatterns || def.text_patterns), ...existing.textPatterns],
+      namePatterns: [...nameRes.patterns, ...existing.namePatterns],
+      textPatterns: [...textRes.patterns, ...existing.textPatterns],
     };
   }
 
-  return { ok: true, domains, configPath: resolvedPath, error: null };
+  // Order custom/overridden domains ahead of built-ins so inferDomain() prioritizes user rules (with general last)
+  const ordered = {};
+  for (const k of customKeys) {
+    if (k !== 'general' && domains[k]) ordered[k] = domains[k];
+  }
+  for (const k of Object.keys(domains)) {
+    if (k !== 'general' && !(k in ordered)) ordered[k] = domains[k];
+  }
+  if (domains.general) ordered.general = domains.general;
+
+  return { ok: true, domains: ordered, configPath: resolvedPath, error: null };
 }
 
 export function parseFrontmatterDomain(raw) {
-  const fm = String(raw || '').match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const clean = String(raw || '').replace(/^\uFEFF/, '');
+  const fm = clean.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!fm) return null;
   const body = fm[1];
   const mDirect = body.match(/^x-domain\s*:\s*["']?([a-z0-9_-]+)["']?/mi);

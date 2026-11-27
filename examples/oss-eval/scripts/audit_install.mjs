@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseCliArgs } from './audit_activity_claims.mjs';
 
 const EXCLUDED_DIRS = new Set(['.git', 'node_modules', '.venv', 'venv', '__pycache__']);
 const INSTALL_FILE_RE = /(?:^|\/)(?:preinstall|postinstall|install|uninstall|setup)\.(?:sh|bash|zsh|js|mjs|cjs|ts|py|ps1|bat|cmd)$|(?:^|\/)(?:\.(?:claude|codex|antigravity)-plugin\/.*|plugin\.json|hooks\.json|mcp_config\.json|\.mcp\.json)$/i;
@@ -230,7 +231,25 @@ const __isCli = (() => {
   try { return process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; }
 })();
 if (__isCli) {
-  const { facts, exitCode } = await run({ target: process.argv[2] || process.cwd() });
-  console.log(JSON.stringify(facts, null, 2));
+  const parsed = parseCliArgs(process.argv.slice(2), {
+    valueFlags: ['--out'],
+    boolFlags: ['--help', '-h'],
+  });
+  if (!parsed.ok) {
+    process.stderr.write(JSON.stringify({ scan_completed: false, error: `invalid arguments: ${parsed.error}` }, null, 2) + '\n');
+    process.exit(1);
+  }
+  if (parsed.flags['--help'] || parsed.flags['-h']) {
+    console.log('Usage: node scripts/audit_install.mjs [dir] [--out <file>]');
+    process.exit(0);
+  }
+  const { facts, exitCode } = await run({ target: parsed.target || process.cwd() });
+  const serialized = JSON.stringify(facts, null, 2) + '\n';
+  if (parsed.values['--out'] && exitCode !== 1 && facts.scan_completed) {
+    const outAbs = path.resolve(parsed.values['--out']);
+    fs.mkdirSync(path.dirname(outAbs), { recursive: true });
+    fs.writeFileSync(outAbs, serialized, 'utf8');
+  }
+  process.stdout.write(serialized);
   process.exit(exitCode);
 }

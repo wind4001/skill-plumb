@@ -591,7 +591,7 @@ if (__isCli) {
   const apiOnly = !!(parsed.flags['--api-only'] || parsed.flags['--no-clone']);
 
   const { facts, exitCode } = await run({ target, workdir, repoSpec, apiBase, offline, apiOnly });
-  if (outPath) {
+  if (outPath && exitCode !== 1 && facts.scan_completed) {
     const resolvedOut = path.resolve(outPath);
     fs.mkdirSync(path.dirname(resolvedOut), { recursive: true });
     fs.writeFileSync(resolvedOut, JSON.stringify(facts, null, 2) + '\n', 'utf8');

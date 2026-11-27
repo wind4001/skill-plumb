@@ -92,7 +92,7 @@ export function detectDirectNoTool(query) {
   }
 
   const literalEdit = /(?:把.{1,40}(?:里的|中的|第\d+行).{0,25}(?:改成|改为|替换成|删掉|删除|去掉)|只改.{1,25}(?:文案|标题|副标题|常量|版本号|拼写|错别字)|fix (?:a )?typo\b|rename local\b|remove ['"`(]?draft['"`)]?)/i;
-  const simpleReadOrStatus = /^(?:(?:看看|查一下|列出|读取|统计|执行|跑一下).{0,30}(?:git log|git status|git diff|行数|前\s*\d+\s*行|后\s*\d+\s*行|package\.json|tsconfig|npm test|pytest|格式化\s*json)|(?:run|check|show|read|list)\s+(?:git status|git log|git diff|package\.json|tsconfig\.json|npm test|pytest)\b)/i;
+  const simpleReadOrStatus = /^(?:(?:看看|查一下|列出|读取|统计|执行|跑一下).{0,20}(?:git log|git status|git diff|行数|前\s*\d+\s*行|后\s*\d+\s*行|package\.json|tsconfig(?:\.json)?|npm test|pytest|格式化\s*json)(?:\s*(?:状态|输出|就行|即可))?\s*[.?!。？！]*$|(?:run|check|show|read|list)\s+(?:git status|git log|git diff|package\.json|tsconfig\.json|npm test|pytest)(?:\s+(?:now|please|output|status))?\s*[.?!]*$)/i;
   const explicitNoSkill = /(?:不用查文档|直接动手|不需要扩展工具|just read|direct edit|no skill needed)/i;
 
   if (literalEdit.test(raw) || simpleReadOrStatus.test(s) || explicitNoSkill.test(raw)) {
@@ -146,8 +146,17 @@ export function scoreFlat(catalog, query, opts = {}) {
 }
 
 export function scoreTwoStage(catalog, query, opts = {}) {
+  const domainsMap = opts.domains || DEFAULT_DOMAINS;
+  const byDomain = buildDomainIndex(catalog);
+
+  if (opts.domain && !byDomain.has(opts.domain) && !(opts.domain in domainsMap)) {
+    return {
+      error: `Unknown domain "${opts.domain}". Valid domains: ${[...new Set([...Object.keys(domainsMap), ...byDomain.keys()])].join(', ')}`,
+    };
+  }
+
   const direct = detectDirectNoTool(query);
-  if (direct.isDirect && !opts.ignoreDirectGuard) {
+  if (direct.isDirect && !opts.ignoreDirectGuard && !opts.domain) {
     return {
       predicted: 'NONE',
       direct_no_tool: true,
@@ -158,12 +167,10 @@ export function scoreTwoStage(catalog, query, opts = {}) {
     };
   }
 
-  const domainsMap = opts.domains || DEFAULT_DOMAINS;
   const qTok = tokenize(query);
-  const byDomain = buildDomainIndex(catalog);
 
   let domainScores = [];
-  if (opts.domain && byDomain.has(opts.domain)) {
+  if (opts.domain) {
     domainScores = [{ domain: opts.domain, score: 99, hits: ['explicit --domain'] }];
   } else {
     for (const [dom, items] of byDomain.entries()) {

@@ -57,6 +57,27 @@ try {
   assert.equal(gateOut.result.routing_smoke.pass, true);
   assert.equal(gateOut.result.verify_results[0].status, 'PASS');
 
+  // Verify scaffolded probe template emits calibration/scopes_skipped and never writes --out on exit 1
+  const { execFileSync } = await import('node:child_process');
+  const probeScript = path.join(skillDir, 'scripts', 'probe_nginx_502_triage.mjs');
+  const nestedProbeOut = path.join(tmp, 'nested', 'probe-ok.json');
+  const okProbeStdout = execFileSync('node', [probeScript, skillDir, '--out', nestedProbeOut], { encoding: 'utf8' });
+  const probeJson = JSON.parse(okProbeStdout);
+  assert.equal(probeJson.calibration.targets_checked, 1);
+  assert.deepEqual(probeJson.scopes_skipped, []);
+  assert.ok(fs.existsSync(nestedProbeOut));
+
+  const badProbeOut = path.join(tmp, 'nested', 'should-not-exist.json');
+  let badProbeStatus = 0;
+  try {
+    execFileSync('node', [probeScript, path.join(tmp, 'missing-target'), '--out', badProbeOut], { encoding: 'utf8', stdio: 'pipe' });
+  } catch (e) {
+    badProbeStatus = e.status ?? 1;
+    assert.equal(JSON.parse(e.stderr).exit_code, 1);
+  }
+  assert.equal(badProbeStatus, 1);
+  assert.equal(fs.existsSync(badProbeOut), false, 'exit 1 must not write stray --out file');
+
   // 3. Overwrite blocked without --force, allowed with --force
   const conflictRes = runScaffold({
     name: 'nginx-502-triage',
@@ -132,11 +153,60 @@ try {
   assert.equal(typeof badGate.result.name, 'string', 'Fallback name must be a string, not a function');
   assert.equal(badGate.result.name, 'broken-skill');
   const failedGates = new Set(badGate.result.failures.map((f) => f.gate));
+  assert.ok(failedGates.has('frontmatter'), 'Missing `name:` in YAML frontmatter must fail frontmatter gate');
   assert.ok(failedGates.has('frontmatter_boundary'));
   assert.ok(failedGates.has('thinness'));
   assert.ok(failedGates.has('links_hygiene'));
 
-  console.log('test_dfactory.mjs PASSED (5/5)');
+  // 6. Unclosed >35-line code fence fails thinness; ~~~ fence & inline code links ignored; file:// disallowed; ..foo allowed; VAR=/home/alice caught
+  const fenceDir = path.join(tmp, 'fence-check');
+  fs.mkdirSync(path.join(fenceDir, '..foo'), { recursive: true });
+  fs.writeFileSync(path.join(fenceDir, '..foo', 'guide.md'), '# Double dot name\n');
+  const unclosedFence = ['```bash', ...Array.from({ length: 40 }, (_, i) => `echo ${i}`)].join('\n');
+  fs.writeFileSync(
+    path.join(fenceDir, 'SKILL.md'),
+    `---\nname: fence-check\nx-domain: repo\ndescription: "Check fences. Use when testing fences. Not for db checks."\n---\n\nInline \`[ex](references/inline-ignored.md)\` and valid [dotdot](..foo/guide.md)\n\n~~~\n[tilde](references/tilde-ignored.md)\n~~~\n\n${unclosedFence}\n`,
+    'utf8'
+  );
+  const fenceGate = runGate({ skillDir: fenceDir, skipRouting: true, noMcp: true, noSync: true });
+  assert.equal(fenceGate.exitCode, 2);
+  const fenceGates = new Set(fenceGate.result.failures.map((f) => f.gate));
+  assert.ok(fenceGates.has('thinness'), 'Unclosed >35-line fence must fail thinness');
+  assert.equal(fenceGates.has('links_hygiene'), false, 'Links inside ~~~ / inline code and ..foo/ must not fail links_hygiene');
+
+  // 7. Invalid gate --mode rejected (exit 1); file:// link and VAR=/home/bobdev/ flagged; relative scaffold outDir respects cwd & rejects bad domain
+  assert.equal(runGate({ skillDir: fenceDir, mode: 'bogus' }).exitCode, 1);
+
+  const leakDir = path.join(tmp, 'leak-check');
+  fs.mkdirSync(leakDir);
+  const eqPath = ['/home', 'bobdev', 'bin'].join('/');
+  fs.writeFileSync(
+    path.join(leakDir, 'SKILL.md'),
+    `---\nname: leak-check\nx-domain: repo\ndescription: "Leak check. Use when checking leaks. Not for db checks."\n---\n\nVAR=${eqPath}/tool\n[bad](file:///etc/passwd)\n`,
+    'utf8'
+  );
+  const leakGate = runGate({ skillDir: leakDir, skipRouting: true, noMcp: true, noSync: true });
+  assert.equal(leakGate.exitCode, 2);
+  assert.ok(leakGate.result.failures.some((f) => f.gate === 'links_hygiene' && /file:\/\//.test(f.reason)));
+  assert.ok(leakGate.result.failures.some((f) => f.gate === 'links_hygiene' && /hardcoded user-profile/.test(f.reason)));
+
+  assert.equal(runScaffold({ name: 'bad-dom', domain: 'bad domain!', summary: 'x' }).exitCode, 1);
+  const cwdBase = path.join(tmp, 'cwd-base');
+  fs.mkdirSync(cwdBase, { recursive: true });
+  const cwdScaf = runScaffold({
+    name: 'rel-skill',
+    domain: 'repo',
+    summary: 'Relative outDir test.',
+    cwd: cwdBase,
+    outDir: 'rel-skills',
+    skillsDirs: [skillsOut],
+    noMcp: true,
+    dryRun: true,
+  });
+  assert.equal(cwdScaf.exitCode, 0);
+  assert.equal(cwdScaf.result.target_dir, path.join(cwdBase, 'rel-skills', 'rel-skill').replace(/\\/g, '/'));
+
+  console.log('test_dfactory.mjs PASSED (7/7)');
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }

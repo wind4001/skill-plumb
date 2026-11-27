@@ -28,15 +28,17 @@ node <skill_dir>/scripts/probe_d_factory.mjs "<target_dir>"
 
 ## Step 2: Scaffold, Author, and Gate
 
+Use the `cli_path` returned in Step 1 (`node "<cli_path>" ...`, or `npx --yes skill-plumb` when installed globally):
+
 1. Check domain neighbors and generate a clean skeleton (`full`, `lite`, or `ops`):
    ```bash
-   npx skill-plumb scaffold --name <slug> --domain <domain> --summary "<desc>" --mode full --not-for "<exclusions>"
+   node "<cli_path>" scaffold --name <slug> --domain <domain> --summary "<desc>" --mode full --not-for "<exclusions>"
    ```
 2. Keep `SKILL.md` under 150 lines / 9 KB and place deep schemas or recipes in `references/guide.md`.
 3. Validate all 6 structural, probe, verification, and routing gates:
    ```bash
-   npx skill-plumb gate "<skill_dir>"
-   npx skill-plumb doctor
+   node "<cli_path>" gate "<skill_dir>"
+   node "<cli_path>" doctor
    ```
 
 Detailed mode selection, verification tiers, and backup checklist: [references/guide.md](references/guide.md)

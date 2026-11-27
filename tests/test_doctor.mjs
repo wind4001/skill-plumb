@@ -80,7 +80,36 @@ try {
   assert.match(textReport, /pg-one/);
   assert.match(textReport, /Suggested router_overrides\.json/);
 
-  console.log('test_doctor.mjs PASSED (2/2)');
+  // 3. Explicit nonexistent --skills-dir or --mcp-cfg must return exitCode 1 (never 0 HEALTHY)
+  const missingDirDoc = runDoctor({ skillsDirs: [path.join(tmp, 'no-such-skills-dir')], noMcp: true });
+  assert.equal(missingDirDoc.exitCode, 1);
+  const missingMcpDoc = runDoctor({ skillsDirs: [cleanDir], mcpCfgPath: path.join(tmp, 'no-such-mcp.json') });
+  assert.equal(missingMcpDoc.exitCode, 1);
+
+  // 4. Unclosed >35-line fence flagged bloated; example link inside code block ignored
+  const edgeDir = path.join(tmp, 'edge-skills');
+  fs.mkdirSync(path.join(edgeDir, 'edge-skill'), { recursive: true });
+  const unclosed = ['```bash', ...Array.from({ length: 40 }, (_, i) => `echo ${i}`)].join('\n');
+  fs.writeFileSync(
+    path.join(edgeDir, 'edge-skill', 'SKILL.md'),
+    `---\nname: edge-skill\nx-domain: repo\ndescription: "Edge case check. Use when testing doctor. Not for db."\n---\n\n\`\`\`md\n[example](references/not-real.md)\n\`\`\`\n\n${unclosed}\n`
+  );
+  const edgeDoc = runDoctor({ skillsDirs: [edgeDir], noMcp: true });
+  assert.equal(edgeDoc.exitCode, 2);
+  assert.equal(edgeDoc.result.summary.bloated_count, 1);
+  assert.equal(edgeDoc.result.summary.broken_links_count, 0);
+
+  // 5. Missing frontmatter / Use when surfaced in both summary and formatted report table
+  const noFmDir = path.join(tmp, 'nofm-skills');
+  fs.mkdirSync(path.join(noFmDir, 'plain-md'), { recursive: true });
+  fs.writeFileSync(path.join(noFmDir, 'plain-md', 'SKILL.md'), '# No YAML Frontmatter\nJust plain text.\n');
+  const noFmDoc = runDoctor({ skillsDirs: [noFmDir], noMcp: true });
+  assert.equal(noFmDoc.exitCode, 2);
+  assert.equal(noFmDoc.result.summary.missing_frontmatter_or_use_when_count, 1);
+  const noFmTable = formatDoctorReport(noFmDoc.result);
+  assert.match(noFmTable, /Missing YAML frontmatter \/ name \/ Use when \| 1/);
+
+  console.log('test_doctor.mjs PASSED (5/5)');
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }

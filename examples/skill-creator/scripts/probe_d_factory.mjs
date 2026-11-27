@@ -24,8 +24,17 @@ function findExecutable(name) {
 }
 
 function resolveCli(explicitCli) {
+  if (explicitCli !== null && explicitCli !== undefined) {
+    const absCli = explicitCli ? path.resolve(explicitCli) : '';
+    try {
+      if (absCli && fs.existsSync(absCli) && fs.statSync(absCli).isFile()) {
+        return { ok: true, cliPath: absCli };
+      }
+    } catch { /* fall through to explicit error */ }
+    return { ok: false, error: `Explicit --cli not found or not a file: ${explicitCli}` };
+  }
+
   const candidates = [
-    explicitCli ? path.resolve(explicitCli) : null,
     process.env.SKILL_PLUMB_BIN ? path.resolve(process.env.SKILL_PLUMB_BIN) : null,
     path.resolve(SKILL_DIR, '..', '..', 'bin', 'skill-plumb.mjs'),
     findExecutable('skill-plumb'),
@@ -33,10 +42,10 @@ function resolveCli(explicitCli) {
 
   for (const c of candidates) {
     try {
-      if (fs.existsSync(c) && fs.statSync(c).isFile()) return c;
+      if (fs.existsSync(c) && fs.statSync(c).isFile()) return { ok: true, cliPath: c };
     } catch { /* ignore */ }
   }
-  return null;
+  return { ok: true, cliPath: null };
 }
 
 function parseArgs(argv) {
@@ -84,7 +93,11 @@ export function runProbe(rawTarget, explicitCli = null) {
     return { exitCode: 1, error: `Target path is not a directory: ${rawTarget}` };
   }
 
-  const cliPath = resolveCli(explicitCli);
+  const cliRes = resolveCli(explicitCli);
+  if (!cliRes.ok) {
+    return { exitCode: 1, error: cliRes.error };
+  }
+  const cliPath = cliRes.cliPath;
   const hasTargetSkillMd = fs.existsSync(path.join(realTarget, 'SKILL.md'));
   const exitCode = cliPath ? 0 : 2;
 
@@ -97,6 +110,9 @@ export function runProbe(rawTarget, explicitCli = null) {
       skill_creator_dir: SKILL_DIR.replace(/\\/g, '/'),
       target: realTarget.replace(/\\/g, '/'),
       target_has_skill_md: hasTargetSkillMd,
+      calibration: { target_checked: true },
+      scopes_checked: ['cli_discovery', 'target_skill_md'],
+      scopes_skipped: [],
       cli_path: cliPath ? cliPath.replace(/\\/g, '/') : null,
     },
   };
@@ -105,7 +121,7 @@ export function runProbe(rawTarget, explicitCli = null) {
 if (path.resolve(process.argv[1] || '') === path.resolve(fileURLToPath(import.meta.url))) {
   const parsed = parseArgs(process.argv.slice(2));
   if (!parsed.ok) {
-    console.error(JSON.stringify({ scan_completed: false, exit_code: 1, error: parsed.error }, null, 2));
+    process.stderr.write(JSON.stringify({ scan_completed: false, exit_code: 1, error: parsed.error }, null, 2) + '\n');
     process.exit(1);
   }
   if (parsed.opts.help) {
@@ -113,10 +129,11 @@ if (path.resolve(process.argv[1] || '') === path.resolve(fileURLToPath(import.me
     process.exit(0);
   }
   const out = runProbe(parsed.opts.target, parsed.opts.cli);
-  const payload = out.exitCode === 1 && !out.result
-    ? { scan_completed: false, exit_code: 1, error: out.error }
-    : out.result;
-  const serialized = JSON.stringify(payload, null, 2) + '\n';
+  if (out.exitCode === 1 && !out.result) {
+    process.stderr.write(JSON.stringify({ scan_completed: false, exit_code: 1, error: out.error }, null, 2) + '\n');
+    process.exit(1);
+  }
+  const serialized = JSON.stringify(out.result, null, 2) + '\n';
   if (parsed.opts.out) {
     fs.mkdirSync(path.dirname(path.resolve(parsed.opts.out)), { recursive: true });
     fs.writeFileSync(parsed.opts.out, serialized, 'utf8');

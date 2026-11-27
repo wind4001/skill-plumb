@@ -510,9 +510,9 @@ export async function fetchGithubJson(apiPath, opts = {}) {
 
   // Prefer authenticated gh CLI only for official https://api.github.com
   if (isOfficialBase && !opts.disableGh) {
-    const ghCheck = spawnSync('gh', ['auth', 'status'], { encoding: 'utf8' });
+    const ghCheck = spawnSync('gh', ['auth', 'status'], { encoding: 'utf8', timeout: 8000 });
     if (!ghCheck.error && ghCheck.status === 0) {
-      const res = spawnSync('gh', ['api', '-i', apiPath], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+      const res = spawnSync('gh', ['api', '-i', apiPath], { encoding: 'utf8', timeout: 15000, maxBuffer: 10 * 1024 * 1024 });
       if (!res.error && res.status === 0) {
         const splitIdx = res.stdout.indexOf('\r\n\r\n') >= 0 ? res.stdout.indexOf('\r\n\r\n') : res.stdout.indexOf('\n\n');
         const sepLen = res.stdout.indexOf('\r\n\r\n') >= 0 ? 4 : 2;

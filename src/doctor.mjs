@@ -13,40 +13,28 @@ import path from 'node:path';
 import {
   buildCrowdedMissingNotFor,
   buildLiveCatalog,
+  extractRoutingClauses,
   parseDescription,
   resolveCatalogContext,
 } from './catalog.mjs';
 import { collectSkillEntries } from './discovery.mjs';
-import { findHardcodedUserPaths } from './gate.mjs';
+import { findHardcodedUserPaths, measureSkillMarkdown, stripFencedCodeBlocks } from './gate.mjs';
 
 function isWithinRoot(rootReal, targetReal) {
   const rel = path.relative(rootReal, targetReal);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-}
-
-function measureSkillFile(mdPath) {
-  const raw = fs.readFileSync(mdPath, 'utf8');
-  const lines = raw.split(/\r?\n/);
-  const bytes = Buffer.byteLength(raw, 'utf8');
-  let inFence = false;
-  let fenceLen = 0;
-  let maxFence = 0;
-  for (const line of lines) {
-    if (/^\s*```/.test(line)) {
-      if (!inFence) { inFence = true; fenceLen = 0; }
-      else { if (fenceLen > maxFence) maxFence = fenceLen; inFence = false; }
-    } else if (inFence) {
-      fenceLen++;
-    }
-  }
-  return { raw, lineCount: lines.length, bytes, maxFence };
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
 }
 
 function checkRelativeLinks(skillReal, rawMd) {
   const issues = [];
-  for (const m of rawMd.matchAll(/\[[^\]]+\]\(([^)#\s]+)(?:#[^)\s]*)?\)/g)) {
+  const stripped = stripFencedCodeBlocks(rawMd);
+  for (const m of stripped.matchAll(/\[[^\]]+\]\(([^)#\s]+)(?:#[^)\s]*)?\)/g)) {
     const target = m[1];
-    if (/^(?:https?:|mailto:|customization:|file:)/.test(target)) continue;
+    if (/^(?:https?:|mailto:|customization:)/.test(target)) continue;
+    if (/^file:/i.test(target)) {
+      issues.push({ type: 'broken_link', target });
+      continue;
+    }
     const resolved = path.resolve(skillReal, target);
     if (!fs.existsSync(resolved)) {
       issues.push({ type: 'broken_link', target });
@@ -95,11 +83,12 @@ export function runDoctor(opts = {}) {
     const disk = entryByName.get(item.name);
     if (!disk) continue;
 
-    const { raw, lineCount, bytes, maxFence } = measureSkillFile(disk.mdPath);
+    const raw = fs.readFileSync(disk.mdPath, 'utf8').replace(/^\uFEFF/, '');
+    const { lineCount, bytes, maxFence } = measureSkillMarkdown(raw);
     const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     const nameMatch = fm ? fm[1].match(/^name\s*:\s*["']?([^\r\n"']+)/m) : null;
     const desc = parseDescription(raw);
-    const hasUseWhen = /(?:Use when|MUST USE|触发(?:方式|词|场景)?|何时用)/i.test(desc);
+    const clauses = extractRoutingClauses(desc);
 
     if (!fm || !nameMatch) {
       missingFrontmatterSkills.push(item.name);
@@ -111,7 +100,7 @@ export function runDoctor(opts = {}) {
         file: disk.mdPath.replace(/\\/g, '/'),
         detail: 'Missing valid YAML frontmatter or `name:` field',
       });
-    } else if (!hasUseWhen) {
+    } else if (!clauses.hasUseWhen) {
       missingFrontmatterSkills.push(item.name);
       findings.push({
         kind: 'missing_use_when',
@@ -224,6 +213,7 @@ export function runDoctor(opts = {}) {
         mcps_scanned: catalog.filter((x) => x.kind === 'mcp').length,
         domains_active: domainCounts.size,
         findings_count: findings.length,
+        missing_frontmatter_or_use_when_count: missingFrontmatterSkills.length,
         bloated_count: bloatedSkills.length,
         crowded_missing_not_for_count: crowdedList.length,
         broken_links_count: brokenLinkSkills.reduce((acc, s) => acc + s.issues.length, 0),
@@ -253,6 +243,7 @@ export function formatDoctorReport(res) {
   lines.push('');
 
   const rows = [
+    ['Missing YAML frontmatter / name / Use when', s.missing_frontmatter_or_use_when_count],
     ['Bloated SKILL.md (>150 lines or >9KB or >35-line fence)', s.bloated_count],
     ['Crowded domain missing Not-for (domain_count >= 2)', s.crowded_missing_not_for_count],
     ['Broken or escaping relative links', s.broken_links_count],

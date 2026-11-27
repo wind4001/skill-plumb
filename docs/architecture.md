@@ -38,9 +38,9 @@ All probes must enforce:
 1. **Frontmatter Boundary**: valid YAML frontmatter, `name`, `Use when`, and non-empty `Not for`.
 2. **Thinness**: line count, byte size, and max inline code fence length.
 3. **Links & Path Hygiene**: all local Markdown links resolve inside `<skill_dir>` with zero hardcoded user-home paths.
-4. **Probes & Regression Suite**: every `scripts/probe_*.mjs` / `preflight_*.mjs` exits `0` on `--help` and `1` on unknown flags; every `verify_*.mjs` suite passes in an isolated `os.tmpdir()`.
+4. **Probes & Regression Suite**: every `scripts/probe_*.mjs`, `scripts/preflight_*.mjs`, `scripts/eval_all.mjs`, or `scripts/audit_all.mjs` exits `0` on `--help` and `1` on unknown flags; every `verify_*.mjs` suite passes in an isolated `os.tmpdir()`.
 5. **Routing Smoke Check**: verifies the skill matches its own name/trigger when placed in the live catalog.
-6. **Optional Mirror Parity**: checks mirror symlinks when `--check-mirror` is passed or an existing `~/.gemini/config/skills` mirror directory is detected.
+6. **Optional Mirror Parity**: opt-in via `--check-mirror <dir>` to verify mirror symlink parity against `<skill_dir>`.
 
 ---
 

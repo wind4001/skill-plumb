@@ -2,10 +2,6 @@
 
 # SkillPlumb（技准）
 
-**让 Agent Skills 真正可用、测得准、不走偏：薄契约 + `0/1/2` 确定性探针 + 黑盒门禁 + 零侵入两段式路由。**
-
-*装了 50+ 个 Skill 后，别再看着你的 Coding Agent 越用越慢、越贵、越爱偷懒。*
-
 [English](README.md) | 简体中文
 
 [![CI](https://github.com/wind4001/skill-plumb/actions/workflows/ci.yml/badge.svg)](https://github.com/wind4001/skill-plumb/actions/workflows/ci.yml)
@@ -15,45 +11,50 @@
 
 </div>
 
----
+**别再写 300 行的 `SKILL.md` 小作文，然后祈祷 Coding Agent 乖乖照做了。**
 
-## 为什么装了 50+ 个 Skill 后，Agent 反而变笨了？
+现在的 `SKILL.md` 大多把脆弱的 bash 片段、人工提醒（“记得别打印密钥”“记得查 API 第二页”）和领域规则全混在一份长 Markdown 里。装到 50–100+ 个之后，Agent 不仅变慢、每轮白烧几千 Token、遇到 *“改个错别字”* 也会误触发重型工作流；而且你为了修误触去改第三方 `SKILL.md`，下次插件一更新就被冲掉。
 
-装 5 个 Skill 时体验惊艳，装到 50–100+ 个之后，大多数 Skill 集合都会撞上三个结构性瓶颈：
-
-1. **`SKILL.md` 沦为 300 行散文论文**：Prompt 越写越长，Agent 要么直接跳过第一步检查，要么假装“已验证通过”，同时每轮都在白烧数千 Token。
-2. **扁平全量暴露导致路由碰撞**：把 50–100+ 条技能描述一股脑塞进首轮系统提示词，信噪比暴跌——连 *“把 README 里的错别字改掉”* 这种小活都会误触发重型审查流程。
-3. **第三方技能更新覆写**：为了加一条 `Not for` 反向边界而直接去改插件同步来的 `SKILL.md`，下次一升级就会被原样覆盖清零。
-
-**SkillPlumb（技准）** 用**零外部运行时依赖（纯 Node.js >= 20）**把 `SKILL.md` 变成可度量、可门禁、可路由的工程化基础设施。
+**SkillPlumb（技准）** 是一套零外部依赖的 Node.js（`>= 20`）CLI，专门从底层重构这套用法：
+- **把可重复的客观环境检查下沉为零依赖 `0/1/2` 本地脚本**，`SKILL.md` 只留 1 页判断契约（`<= 150` 行），不再靠模型肉眼猜结果。
+- **两段式路由 `inspect` 治理 50–100+ 技能库**：按域粗筛再减去 `Not for` 惩罚，扫描量砍掉 ~91%，简单改文案直接返回 `NONE`。
+- **用外置 `router_overrides.json` 零侵入修第三方冲突**：不改上游 `SKILL.md` 一个字节，插件升级不丢失。
+- **用 `doctor` / `scaffold` / `gate` 管好全生命周期**：自动适配 Claude Code、Codex、Antigravity、Gemini CLI 与 `.agents/skills`。
 
 ---
 
-## 实测对比数据（受控 N=100 基准测试）
+## 我们为什么做它（以及亲手淘汰掉的弯路）
 
-以下数据均来自开源拆仓前的受控对照实测（完整实验设置与消融数据见 [docs/benchmarks-summary.md](docs/benchmarks-summary.md)）：
+SkillPlumb 不是拍脑袋造出来的“又一个 Skill Linter”，而是历经三代盲测对照后收敛出的工程方案（完整实验见 [docs/benchmarks-summary.md](docs/benchmarks-summary.md)）：
 
-| 指标 | 扁平 N=100 基线 | SkillPlumb 两段式 | 变化幅度 |
-|---|---:|---:|---|
-| **离线 Top-1 路由准确率**（40 条查询） | 75.0%（`30/40`） | **90.0%（`36/40`）** | **+15.0 个百分点**（真实工具 `18/18`） |
-| **单次查询扫描候选数** | 100.0 | **8.5** | **-91.5% 扫描扇出** |
-| **Step-1 确定性探针遵从率**（真实 LLM） | `2/4` | **`4/4`** | **100% 按契约先跑探针** |
-| **平均首轮输入 Token**（真实 LLM） | 18,294.8 | **12,099.3** | **-33.9% 首轮输入** |
-| **总输入 Token / 平均耗时**（4 组配对） | 172,735 / 129.8s | **102,657 / 102.5s** | **-40.6% 总输入 / -21.0% 耗时** |
-| **第三方 `SKILL.md` 侵入改动** | 需手工改原文件 | **0 字节修改** | **SHA-256 逐字节一致** |
+| 演进代际 | 做法 | 真实对照踩出的问题 | 最终结论 |
+|---|---|---|---|
+| **1. 传统长散文 `SKILL.md`** | 250–400 行文字说明 + 10 几段手工命令 | 盲测发布前自查任务时，**75%（3/4）的报告把明文密钥直接泄漏了出去**；模型经常漏翻 GitHub API 第 2 页和隐私文档；每次触发吃掉 14–19 KB 上下文。 | 客观检查不可靠 |
+| **2. 重协议 / 重外壳包装** | 独立运行时 + 哈希回执链 + 严格协议仪式 | 确实堵住了泄密，但引爆了**“黑盒不信任税”**：强模型跑完后反而多花 **5–8 轮（~2.5 万字符）** 去翻脚本源码确认有没有漏扫，小任务也要走 7–11 次协议调用。 | **整套废除** |
+| **3. SkillPlumb（薄契约 + `0/1/2` 探针 + 外置路由）** | 1 页 `SKILL.md` + 零依赖透明脚本（返回 JSON + `calibration` 校准计数 + `scopes_skipped`） | 凭据泄漏降到 **0%**；消除不信任税；`SKILL.md` 压缩 **~87%**；真实公开仓实测耗时降 **11%–22%**、工具调用降 **13%–40%**。 | **现役标准** |
+
+### 核心硬数据一览
+
+| 对比维度 | 基线做法 | 接入 SkillPlumb | 实测变化 |
+|---|---|---|---|
+| **盲测审计凭据明文泄漏** | 75%（`3/4` 泄漏） | **0%** | 工具边界自动区间脱敏 |
+| **高频审计类 `SKILL.md` 体积** | 278–380 行 | **37–58 行** | 上下文占用减少 **~87%** |
+| **真实公开仓配对实测** *(安全、活库 PG18、CI/CD)* | 1.0x | **耗时 -11% ~ -22%** | **工具调用 -13% ~ -40%** |
+| **N=100 离线 Top-1 路由准确率**（40 条查询） | 75.0%（`30/40`，扫 100 个） | **90.0%（`36/40`，扫 8.5 个）** | 真实工具 **18/18**，扫描扇出 **-91.5%** |
+| **N=100 真实 LLM 配对实跑** | Step-1 探针遵从 `2/4` | **Step-1 探针遵从 `4/4`** | 首轮输入 Token **-33.9%** / 总输入 **-40.6%** |
+| **第三方 `SKILL.md` 侵入修改** | 手工改原文件（升级被覆盖） | **0 字节修改** | `router_overrides.json` 保持 **SHA-256 一致** |
 
 ---
 
-## 30 秒只读体检（`doctor`）
+## 30 秒先看自己本机的问题（`doctor`）
 
-一条命令扫描你本机所有 Skill 目录，**绝不修改任何用户文件**：
+一条只读命令扫描你本机所有 Skill 目录——**绝不修改任何文件**：
 
 ```bash
-# 克隆仓库后直接运行（发布 npm 后亦可直接 npx skill-plumb doctor）
 node bin/skill-plumb.mjs doctor
 ```
 
-输出示例（自动识别膨胀契约、拥挤域冲突、断链，并生成可粘贴的零侵入修复片段）：
+自动探测 `./.agents/skills`、`~/.agents/skills`、`~/.claude/skills`（Claude Code）、`~/.codex/skills`（Codex）、`~/.gemini/config/skills`（Antigravity / Gemini）及常见 MCP 配置：
 
 ```text
 SkillPlumb Doctor — ISSUES FOUND (exit 2)
@@ -90,34 +91,7 @@ Suggested router_overrides.json snippet (zero-invasion fix):
 
 ---
 
-## 改造前 vs. 改造后
-
-| 维度 | 传统 50+ Skill 堆砌 | 接入 SkillPlumb 之后 |
-|---|---|---|
-| **`SKILL.md` 形态** | 200–400 行散文 + 大段内联脚本 | **薄行为契约**（`<= 150` 行、`<= 9 KB`、按需加载 `references/`） |
-| **客观检查执行** | LLM 靠肉眼读文件“拍脑袋过关” | **`0 / 1 / 2` 确定性探针**（`0` 通过、`1` 报错、`2` 发现问题/覆盖不全） |
-| **技能路由机制** | 每轮全量 N 选 1 扁平注入 | **两段式 `O(domain)`** 粗筛 + `Not for` 负向惩罚 + 直连守卫 |
-| **改错别字等小操作** | 动辄误触发重型工作流 | **直连免工具守卫**直接返回 `NONE`（零额外开销） |
-| **第三方技能冲突** | 改 `SKILL.md` 后被插件更新覆盖 | **外置 `router_overrides.json`**（零侵入、升级不丢） |
-| **运行时依赖** | Python + Node + YAML + 向量库 | **零外部依赖**（仅标准 Node.js `>= 20` 内置模块） |
-
----
-
-## 开箱兼容主流 Agent 宿主目录
-
-默认自动探测常见宿主目录与 MCP 配置，也支持用 `--skills-dir`（可重复指定多目录）、`--mcp-cfg` / `--no-mcp` 显式覆盖：
-
-| 宿主 / 规范 | 自动探测技能目录 | 说明 |
-|---|---|---|
-| **项目级工作区** | `./.agents/skills` | 优先级最高，适合项目专属 Skill |
-| **通用全局目录** | `~/.agents/skills` | 按 `realpathSync` 与技能名自动去重 |
-| **Claude Code** | `~/.claude/skills` | 同时探测 `~/.config/claude/mcp_config.json` 与 `~/.claude.json` |
-| **Codex CLI** | `~/.codex/skills` | 跨平台支持 Windows / macOS / Linux |
-| **Antigravity / Gemini** | `~/.gemini/config/skills` | 同时探测 `~/.gemini/config/mcp_config.json` |
-
----
-
-## 核心工作流与四大支柱
+## 核心机制：三件事拉开与普通 Linter/路由器的差距
 
 ```text
   [作者 / AI]
@@ -133,35 +107,54 @@ Suggested router_overrides.json snippet (zero-invasion fix):
        ▼
   skill-plumb inspect   ──►  Stage 1：直连免工具守卫 (NONE) + O(domain) 域粗筛
   (指纹自动热刷新)            Stage 2：正向触发分 - Not-for 负向惩罚
-                             歧义兜底：拥挤域缺少 Not-for 时交还 LLM 消歧
+                             歧义兜底：拥挤域缺 Not-for 时返回候选清单由 LLM 裁决
                                ▲
                                │  零侵入外置护栏
                      router_overrides.json（永不改写第三方 SKILL.md）
 ```
 
-1. **薄契约（Thin Contracts）**：强制 `<= 150` 行、`<= 9,000` 字节、无超过 35 行的内联代码块，把长文档与规范外移至 `references/`。
-2. **`0 / 1 / 2` 确定性探针**：明确区分 `0`（干净/就绪）、`1`（CLI 错/目标缺失/软链越界）、`2`（发现阻塞项或覆盖不全，绝不把跳过当零问题），并内置 `realpathSync` 防越界与零明文凭据脱敏。
-3. **6 道黑盒门禁（`gate`）**：新写或改造完 Skill 后一键验收，杜绝“写了脚本没测 `--help` / 错参”、“写死本机绝对路径”、“Markdown 断链”等常见返工。
-4. **零侵入两段式路由（`inspect`）**：基于 `mtimeMs + size` SHA-256 指纹自动增量刷新，无需每次手动 `sync`；Stage 2 自动剥离 `(use sibling-skill)` 引用并排除自身 slug 词，防止兄弟技能间因共享品牌词产生自惩罚。
+1. **绝不把未知当“干净”的 `0 / 1 / 2` 探针契约**：
+   - `0` = 检查完整跑完且无异常（仍需核对 `calibration` 与 `findings`）。
+   - `1` = CLI 参数错误、目标缺失或软链越界（`realpathSync` 校验）。
+   - `2` = 发现阻塞项，**或任何覆盖不全**（如离线 `--offline`、无 git 历史、`>512KB` 超大文件、API 截断）。遇到 `exit 2` 严禁宣称“全部干净”。
+2. **零侵入 `router_overrides.json` + 拥挤歧义主动上报**：
+   - 第三方插件升级时会覆写全局 `SKILL.md`，因此一律在外部 `router_overrides.json` 中补 `domain`、双语 `aka` 与 `not_for`。
+   - `inspect` 基于 `mtimeMs + size` 指纹自动热刷新；打分时自动剥离 `(use sibling)` 并排除自身 slug 词防止兄弟技能自惩罚；Top-2 分差 <20% 且缺 `Not for` 时置位 `ambiguous: true` 交给 LLM 裁决。
+3. **AI 自助造轮子 + 6 道门禁验收（`scaffold` + `gate`）**：
+   - 不仅人能用，AI Agent 也能直接调 `scaffold` 生成骨架，写完逻辑后自动跑通 `gate`（Frontmatter、篇幅与 `<= 35` 行代码块、断链、本机路径泄露、探针 `--help`/错参退出、`verify_*.mjs` 与路由冒烟）。
 
 ---
 
-## CLI 常用命令速查
+## 哪些场景不适配（以及为什么）
+
+我们在对照实验里专门验证过“不该用它”的边界，避免把工程门禁硬套在不合适的地方：
+
+| 不适配场景 | 为什么不适配（实验依据与技术原因） | 正确替代方式 |
+|---|---|---|
+| **纯编码纪律类 Skill** *(如 TDD、调试心法)* | 我们在真实 Python 库 `tomli` 上的 TDD 对照实测证实：强加机械门禁脚本对正确性 **0 增益**（两组隐藏验收均过 `20/20`），反而把小步红绿微循环扭曲成大步粗批次。 | 用 `--mode lite`（精简规则 + `references/`，不加探针脚本）。 |
+| **纯创作、文风、人设或审美类 Skill** | 文笔、人设语气、视觉审美没有客观的 `0/1/2` 脚本真值；硬写门禁只会制造形式主义。 | 用 `--mode lite` + 正反例语料库。 |
+| **低频、一次性、单仓库自用脚本** | 写探针和 `verify_*.mjs` 有明确的前期开发与维护成本，低频使用摊不平脚本成本，封装成全局 `SKILL.md` 还会污染全局列表。 | 留在项目自己的 `package.json`、`Makefile` 或 `--mode ops` 里。 |
+| **技能总共不到 15–20 个且互不重叠** | 扁平注入完全放得下且不会撞车，再加一层 `inspect` 反而多一次 CLI 调度开销。 | 不用开两段式路由；偶尔跑 `doctor` / `gate` 体检即可。 |
+| **指望零配置做语义向量 / Embedding 检索** | SkillPlumb 刻意坚持零外部依赖（无向量库、无 API Key），采用词法 + 中文 n-gram + 域先验 + `Not for` 打分。描述含糊又没补 `aka`/`Not for` 时会返回 `ambiguous: true`，不会靠向量硬猜。 | 在 `router_overrides.json` 补齐 `aka` 与 `not_for`，或接入专用 Embedding 路由器。 |
+| **无 Node.js `>= 20` 或无本地 Shell 的纯网页沙盒** | 本地探针与 `inspect` 依赖本机执行 Node 命令。 | 在平台提示词或 Project Instructions 中直接内联精简规则。 |
+| **把 `exit 0` 当成业务与安全最终背书** | 脚本只能验证机械事实（`.env` 缺键、断链、正则命中密钥），不能替代业务逻辑理解、威胁建模或架构取舍。 | 把探针 JSON 当作事实依据交给 LLM 或人工复核，切勿盲信绿灯。 |
+
+---
+
+## CLI 速查与配置
 
 ```bash
-# 1. 全机只读健康体检（人类可读表格 或 --json）
+# 1. 只读健康体检（表格输出 或 --json）
 node bin/skill-plumb.mjs doctor
 node bin/skill-plumb.mjs doctor --skills-dir ./skills --no-mcp --json
 
-# 2. 生成新 Skill 骨架（支持 full | lite | ops 三种模式）
+# 2. 生成新 Skill 骨架（支持 full | lite | ops）
 node bin/skill-plumb.mjs scaffold \
-  --name env-diff-audit \
-  --domain deploy \
+  --name env-diff-audit --domain deploy \
   --summary "Audit .env against .env.example drift without secret echo." \
   --use-when "checking .env and .env.example before deploy" \
   --not-for "repo-wide git history secret audits (use pre-publish-audit)" \
-  --mode full \
-  --out-dir ./.agents/skills
+  --mode full --out-dir ./.agents/skills
 
 # 3. 执行 6 道黑盒门禁验收
 node bin/skill-plumb.mjs gate ./.agents/skills/env-diff-audit
@@ -177,34 +170,19 @@ node bin/skill-plumb.mjs init-plugin --format plugin --out ./skill-plumb-router
 node bin/skill-plumb.mjs init-plugin --format agents-md --out ./AGENTS.md
 ```
 
-### 外置规则配置示例（`router_overrides.json` & `domains.json`）
-
-不改第三方 `SKILL.md` 即可为其补充域归属、双语别名 `aka` 与反向边界 `not_for`（完整模板见 [templates/router_overrides.example.json](templates/router_overrides.example.json)）：
-
-```json
-{
-  "overrides": {
-    "third-party-postgres-linter": {
-      "domain": "db",
-      "aka": ["postgres lint", "pg schema check"],
-      "not_for": ["live slow-query EXPLAIN tuning (use pg-query-tuner)"]
-    }
-  }
-}
-```
-
-内置 12 个通用软件工程域（`db`、`sec`、`deploy`、`repo`、`eval`、`audit_qa`、`frontend_viz`、`docs_io`、`code_graph`、`web_media`、`meta_collab`、`general`），可在项目根目录放置 `./domains.json`、`.skill-plumb.json` 或传 `--domains <file>` 自定义扩展（见 [templates/domains.example.json](templates/domains.example.json)）。
+* **外置边界覆盖示例**：[templates/router_overrides.example.json](templates/router_overrides.example.json)
+* **自定义领域扩展示例**（在内置 12 个通用软件工程域 `db`、`sec`、`deploy`、`repo`、`eval`、`audit_qa`、`frontend_viz`、`docs_io`、`code_graph`、`web_media`、`meta_collab`、`general` 上扩展）：[templates/domains.example.json](templates/domains.example.json)
 
 ---
 
-## 内置高质量示范技能（`examples/`）
+## 内置示范技能（`examples/`）与测试
 
-`examples/` 下 4 个可运行技能全部通过 `skill-plumb gate`、`skill-plumb doctor` 与各自的 `os.tmpdir()` 黑盒回归套件：
+`examples/` 下 4 个示范技能全部通过 `skill-plumb gate`、`skill-plumb doctor` 与各自的 `os.tmpdir()` 黑盒回归套件：
 
 | 示范技能 | 所属域 | 核心演示能力 |
 |---|---|---|
-| [`env-diff-audit`](examples/env-diff-audit/SKILL.md) | `deploy` | 自主脚手架产出的 D-Full 典范：零明文泄露比对 `.env` 与 `.env.example` |
-| [`oss-eval`](examples/oss-eval/SKILL.md) | `eval` | 第三方 GitHub/开源项目尽调（安装钩子、遥测、活跃度）与 `--api-only` 轻量化初筛 |
+| [`env-diff-audit`](examples/env-diff-audit/SKILL.md) | `deploy` | 自主脚手架产出的薄契约典范：零明文泄露比对 `.env` 与 `.env.example` |
+| [`oss-eval`](examples/oss-eval/SKILL.md) | `eval` | 第三方 GitHub/开源项目尽调（安装钩子、遥测、活跃度）与 `--api-only` 快速初筛 |
 | [`pre-publish-audit`](examples/pre-publish-audit/SKILL.md) | `repo` | 开源/提交前自查（含 Git 历史密钥、PII、硬编码路径、Compose 端口与 Markdown 断链） |
 | [`skill-creator`](examples/skill-creator/SKILL.md) | `meta_collab` | 串联 `scaffold`、`gate` 与 `doctor` 的薄契约技能生产工作流 |
 
@@ -218,6 +196,6 @@ npm test
 
 ## 进阶文档与开源协议
 
-* [基准评测与消融数据报告](docs/benchmarks-summary.md) — N=100 离线路由消融、真实 LLM A/B 实测与自主创作沙盒结果
-* [架构设计与实战避坑清单](docs/architecture.md) — `0/1/2` 探针规范、打分细节、Windows `.cmd` `EINVAL` 与 PowerShell 5.1 兼容实践
+* [基准评测与消融数据报告](docs/benchmarks-summary.md)
+* [架构设计与实战避坑清单](docs/architecture.md)
 * [MIT License](LICENSE)

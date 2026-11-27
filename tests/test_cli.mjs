@@ -41,7 +41,7 @@ try {
   assert.equal(initRes.status, 0, initRes.stderr);
   assert.ok(fs.existsSync(path.join(pluginDir, 'plugin.json')));
   const agentsContent = fs.readFileSync(path.join(pluginDir, 'rules', 'AGENTS.md'), 'utf8');
-  assert.match(agentsContent, /npx skill-plumb inspect/);
+  assert.match(agentsContent, /npx --yes skill-plumb inspect/);
   assert.equal(/[A-Za-z]:[/\\]Users[/\\]/i.test(agentsContent), false);
 
   const agentsFile = path.join(tmp, 'AGENTS.md');
@@ -49,10 +49,10 @@ try {
   assert.equal(initMd.status, 0);
   assert.ok(fs.existsSync(agentsFile));
 
-  // 3. scaffold -> gate -> sync -> brief -> list -> inspect -> doctor via CLI
+  // 3. scaffold -> gate -> sync -> brief -> list -> inspect -> doctor via CLI (--catalog vs --out)
   const skillsDir = path.join(tmp, 'skills');
   const catalogOut = path.join(tmp, 'catalog.json');
-  const common = ['--skills-dir', skillsDir, '--no-mcp', '--out', catalogOut];
+  const common = ['--skills-dir', skillsDir, '--no-mcp', '--catalog', catalogOut];
 
   const scaf = runCli([
     'scaffold',
@@ -62,7 +62,8 @@ try {
     '--use-when', 'scanning package-lock.json or uv.lock for CVEs',
     '--not-for', 'checking .env config drift (use env-diff-audit)',
     '--out-dir', skillsDir,
-    ...common,
+    '--skills-dir', skillsDir,
+    '--no-mcp',
   ]);
   assert.equal(scaf.status, 0, scaf.stderr);
 
@@ -75,9 +76,12 @@ try {
   ]);
   assert.equal(gate.status, 0, gate.stdout + gate.stderr);
 
-  const sync = runCli(['sync', ...common]);
+  const syncReport = path.join(tmp, 'sync-report.json');
+  const sync = runCli(['sync', ...common, '--out', syncReport]);
   assert.equal(sync.status, 0, sync.stderr);
   assert.equal(JSON.parse(sync.stdout).skills, 1);
+  assert.equal(JSON.parse(fs.readFileSync(syncReport, 'utf8')).skills, 1);
+  assert.ok(Array.isArray(JSON.parse(fs.readFileSync(catalogOut, 'utf8'))));
 
   const brief = runCli(['brief', ...common]);
   assert.equal(brief.status, 0);
@@ -87,15 +91,51 @@ try {
   assert.equal(list.status, 0);
   assert.equal(JSON.parse(list.stdout).items[0].id, 'sec/lockfile-cve-check');
 
-  const inspect = runCli(['inspect', 'scan lockfile-cve-check for CVEs', ...common]);
+  const inspectReport = path.join(tmp, 'inspect-report.json');
+  const inspect = runCli(['inspect', 'scan lockfile-cve-check for CVEs', ...common, '--out', inspectReport]);
   assert.equal(inspect.status, 0);
   assert.equal(JSON.parse(inspect.stdout).predicted, 'sec/lockfile-cve-check');
+  assert.equal(JSON.parse(fs.readFileSync(inspectReport, 'utf8')).predicted, 'sec/lockfile-cve-check');
+  assert.ok(Array.isArray(JSON.parse(fs.readFileSync(catalogOut, 'utf8'))), '--out on inspect must not overwrite --catalog');
 
   const doc = runCli(['doctor', '--skills-dir', skillsDir, '--no-mcp', '--json']);
   assert.equal(doc.status, 0, doc.stdout);
   assert.equal(JSON.parse(doc.stdout).summary.findings_count, 0);
 
-  console.log('test_cli.mjs PASSED (3/3)');
+  // 4. sync exits 2 when override_warnings exist even if missing_not_for_count === 0
+  const warnOvr = path.join(tmp, 'warn-overrides.json');
+  fs.writeFileSync(warnOvr, JSON.stringify({
+    overrides: {
+      'lockfile-cve-check': { domain: 'sec', not_for: 'non-array string warning' },
+    },
+  }, null, 2));
+  const warnSync = runCli(['sync', '--skills-dir', skillsDir, '--no-mcp', '--overrides', warnOvr, '--catalog', catalogOut]);
+  assert.equal(warnSync.status, 2);
+  assert.ok(JSON.parse(warnSync.stdout).override_warnings.length >= 1);
+
+  // 5. Invalid positive integer options, --out -h, --flag=, extra positionals, and gate --mode bogus exit 1
+  assert.equal(runCli(['doctor', '--max-lines', '0', '--skills-dir', skillsDir, '--no-mcp']).status, 1);
+  assert.equal(runCli(['inspect', 'scan CVEs', '--limit', 'abc', ...common]).status, 1);
+  assert.equal(runCli(['doctor', '--out', '-h', '--skills-dir', skillsDir, '--no-mcp']).status, 1);
+  assert.equal(runCli(['doctor', '--mcp-cfg=', '--skills-dir', skillsDir]).status, 1);
+  assert.equal(runCli(['doctor', 'extra-arg', '--skills-dir', skillsDir, '--no-mcp']).status, 1);
+  assert.equal(runCli(['gate', path.join(skillsDir, 'lockfile-cve-check'), '--mode', 'bogus']).status, 1);
+
+  // 6. scaffold --out <dir> and --flag=val work as documented
+  const scafOutFlagDir = path.join(tmp, 'skills-via-out');
+  const scafOutRes = runCli([
+    'scaffold',
+    '--name=out-flag-skill',
+    '--domain=repo',
+    '--summary=Verify --out works as scaffold output directory.',
+    `--out=${scafOutFlagDir}`,
+    '--skills-dir', skillsDir,
+    '--no-mcp',
+  ]);
+  assert.equal(scafOutRes.status, 0, scafOutRes.stderr);
+  assert.ok(fs.existsSync(path.join(scafOutFlagDir, 'out-flag-skill', 'SKILL.md')));
+
+  console.log('test_cli.mjs PASSED (6/6)');
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
