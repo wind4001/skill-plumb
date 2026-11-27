@@ -5,6 +5,7 @@
 English | [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/wind4001/skill-plumb/actions/workflows/ci.yml/badge.svg)](https://github.com/wind4001/skill-plumb/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/skill-plumb.svg)](https://www.npmjs.com/package/skill-plumb)
 ![Node >= 20](https://img.shields.io/badge/node-%3E%3D20-339933)
 ![Zero Dependencies](https://img.shields.io/badge/dependencies-0-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -48,10 +49,10 @@ SkillPlumb did not start as "yet another skill linter". It came out of testing t
 
 ## Try It in 30 Seconds (`doctor`)
 
-Scan every installed skill folder on your machine in one read-only command — **zero files modified**:
+Scan every installed skill folder on your machine in one read-only command — **zero files modified** (zero-install via `npx`, or install globally with `npm i -g skill-plumb`):
 
 ```bash
-node bin/skill-plumb.mjs doctor
+npx skill-plumb doctor
 ```
 
 Auto-discovers `./.agents/skills`, `~/.agents/skills`, `~/.claude/skills` (Claude Code), `~/.codex/skills` (Codex), and `~/.gemini/config/skills` (Antigravity / Gemini), plus MCP configs:
@@ -143,13 +144,15 @@ We explicitly tested where deterministic probes and two-stage routing **fail to 
 
 ## CLI Quick Reference
 
+*(From a cloned repository, you can replace `npx skill-plumb` with `node bin/skill-plumb.mjs`.)*
+
 ```bash
 # 1. Read-only ecosystem audit (human table or --json)
-node bin/skill-plumb.mjs doctor
-node bin/skill-plumb.mjs doctor --skills-dir ./skills --no-mcp --json
+npx skill-plumb doctor
+npx skill-plumb doctor --skills-dir ./skills --no-mcp --json
 
 # 2. Scaffold a skill (modes: full | lite | ops)
-node bin/skill-plumb.mjs scaffold \
+npx skill-plumb scaffold \
   --name env-diff-audit --domain deploy \
   --summary "Audit .env against .env.example drift without secret echo." \
   --use-when "checking .env and .env.example before deploy" \
@@ -157,17 +160,17 @@ node bin/skill-plumb.mjs scaffold \
   --mode full --out-dir ./.agents/skills
 
 # 3. Validate all 6 gates on a skill directory
-node bin/skill-plumb.mjs gate ./.agents/skills/env-diff-audit
+npx skill-plumb gate ./.agents/skills/env-diff-audit
 
 # 4. Route queries & inspect domains
-node bin/skill-plumb.mjs brief
-node bin/skill-plumb.mjs list deploy
-node bin/skill-plumb.mjs inspect "compare .env against .env.example before deploy" --limit 3
-node bin/skill-plumb.mjs sync
+npx skill-plumb brief
+npx skill-plumb list deploy
+npx skill-plumb inspect "compare .env against .env.example before deploy" --limit 3
+npx skill-plumb sync
 
 # 5. Generate a portable routing-rule plugin or AGENTS.md snippet
-node bin/skill-plumb.mjs init-plugin --format plugin --out ./skill-plumb-router
-node bin/skill-plumb.mjs init-plugin --format agents-md --out ./AGENTS.md
+npx skill-plumb init-plugin --format plugin --out ./skill-plumb-router
+npx skill-plumb init-plugin --format agents-md --out ./AGENTS.md
 ```
 
 * **Customize routing boundaries**: [templates/router_overrides.example.json](templates/router_overrides.example.json)

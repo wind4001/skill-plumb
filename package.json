@@ -8,7 +8,7 @@
     "node": ">=20.0.0"
   },
   "bin": {
-    "skill-plumb": "./bin/skill-plumb.mjs"
+    "skill-plumb": "bin/skill-plumb.mjs"
   },
   "exports": {
     ".": "./src/index.mjs"
@@ -20,15 +20,24 @@
     "docs/",
     "README.md",
     "README.zh-CN.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
     "test": "node tests/run_all.mjs",
-    "doctor": "node bin/skill-plumb.mjs doctor"
+    "doctor": "node bin/skill-plumb.mjs doctor",
+    "prepublishOnly": "npm test"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "agent-skills",
     "skill-md",
+    "claude-code",
+    "codex",
+    "antigravity",
+    "ai-agents",
     "llm-agents",
     "mcp",
     "routing",
@@ -37,7 +46,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/wind4001/skill-plumb.git"
+    "url": "git+https://github.com/wind4001/skill-plumb.git"
   },
   "homepage": "https://github.com/wind4001/skill-plumb#readme",
   "bugs": {

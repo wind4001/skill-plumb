@@ -5,6 +5,7 @@
 [English](README.md) | 简体中文
 
 [![CI](https://github.com/wind4001/skill-plumb/actions/workflows/ci.yml/badge.svg)](https://github.com/wind4001/skill-plumb/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/skill-plumb.svg)](https://www.npmjs.com/package/skill-plumb)
 ![Node >= 20](https://img.shields.io/badge/node-%3E%3D20-339933)
 ![Zero Dependencies](https://img.shields.io/badge/dependencies-0-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -48,10 +49,10 @@ SkillPlumb 不是拍脑袋造出来的“又一个 Skill Linter”，而是历�
 
 ## 30 秒先看自己本机的问题（`doctor`）
 
-一条只读命令扫描你本机所有 Skill 目录——**绝不修改任何文件**：
+一条只读命令扫描你本机所有 Skill 目录——**绝不修改任何文件**（零安装直接跑，也可用 `npm i -g skill-plumb` 或在源码仓运行 `node bin/skill-plumb.mjs`）：
 
 ```bash
-node bin/skill-plumb.mjs doctor
+npx skill-plumb doctor
 ```
 
 自动探测 `./.agents/skills`、`~/.agents/skills`、`~/.claude/skills`（Claude Code）、`~/.codex/skills`（Codex）、`~/.gemini/config/skills`（Antigravity / Gemini）及常见 MCP 配置：
@@ -143,13 +144,15 @@ Suggested router_overrides.json snippet (zero-invasion fix):
 
 ## CLI 速查与配置
 
+*(在已克隆源码仓内也可把 `npx skill-plumb` 替换为 `node bin/skill-plumb.mjs`。)*
+
 ```bash
 # 1. 只读健康体检（表格输出 或 --json）
-node bin/skill-plumb.mjs doctor
-node bin/skill-plumb.mjs doctor --skills-dir ./skills --no-mcp --json
+npx skill-plumb doctor
+npx skill-plumb doctor --skills-dir ./skills --no-mcp --json
 
 # 2. 生成新 Skill 骨架（支持 full | lite | ops）
-node bin/skill-plumb.mjs scaffold \
+npx skill-plumb scaffold \
   --name env-diff-audit --domain deploy \
   --summary "Audit .env against .env.example drift without secret echo." \
   --use-when "checking .env and .env.example before deploy" \
@@ -157,17 +160,17 @@ node bin/skill-plumb.mjs scaffold \
   --mode full --out-dir ./.agents/skills
 
 # 3. 执行 6 道黑盒门禁验收
-node bin/skill-plumb.mjs gate ./.agents/skills/env-diff-audit
+npx skill-plumb gate ./.agents/skills/env-diff-audit
 
 # 4. 两段式路由查询与域浏览
-node bin/skill-plumb.mjs brief
-node bin/skill-plumb.mjs list deploy
-node bin/skill-plumb.mjs inspect "compare .env against .env.example before deploy" --limit 3
-node bin/skill-plumb.mjs sync
+npx skill-plumb brief
+npx skill-plumb list deploy
+npx skill-plumb inspect "compare .env against .env.example before deploy" --limit 3
+npx skill-plumb sync
 
 # 5. 生成跨宿主路由规范插件或 AGENTS.md 片段
-node bin/skill-plumb.mjs init-plugin --format plugin --out ./skill-plumb-router
-node bin/skill-plumb.mjs init-plugin --format agents-md --out ./AGENTS.md
+npx skill-plumb init-plugin --format plugin --out ./skill-plumb-router
+npx skill-plumb init-plugin --format agents-md --out ./AGENTS.md
 ```
 
 * **外置边界覆盖示例**：[templates/router_overrides.example.json](templates/router_overrides.example.json)
