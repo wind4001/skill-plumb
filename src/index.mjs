@@ -16,6 +16,7 @@ export { tokenize, detectDirectNoTool, scoreFlat, scoreTwoStage } from './scorer
 export {
   parseFrontmatter,
   parseDescription,
+  extractRoutingClauses,
   buildLiveCatalog,
   computeSourceFingerprint,
   buildCrowdedMissingNotFor,

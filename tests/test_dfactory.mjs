@@ -206,7 +206,44 @@ try {
   assert.equal(cwdScaf.exitCode, 0);
   assert.equal(cwdScaf.result.target_dir, path.join(cwdBase, 'rel-skills', 'rel-skill').replace(/\\/g, '/'));
 
-  console.log('test_dfactory.mjs PASSED (7/7)');
+  // 8. Gate 3 catches hardcoded user-profile paths in references/*.md; Gate 5 honors overrides domain & aka
+  const refLeakSkill = path.join(tmp, 'ref-leak-skill');
+  fs.mkdirSync(path.join(refLeakSkill, 'references'), { recursive: true });
+  fs.writeFileSync(
+    path.join(refLeakSkill, 'SKILL.md'),
+    '---\nname: ref-leak-skill\nx-domain: repo\ndescription: "Check ref leaks. Use when validating refs. Not for db queries."\n---\n\nSee [guide](references/guide.md).\n'
+  );
+  const refSecretHome = ['/home', 'devuser99', 'bin'].join('/');
+  fs.writeFileSync(path.join(refLeakSkill, 'references', 'guide.md'), `Run ${refSecretHome}/cli.\n`);
+  const refGate = runGate({ skillDir: refLeakSkill, skipRouting: true, noMcp: true, noSync: true });
+  assert.equal(refGate.exitCode, 2);
+  assert.ok(refGate.result.failures.some((f) => f.gate === 'links_hygiene' && /references\/guide\.md/.test(f.reason)));
+
+  const ovrSkillsRoot = path.join(tmp, 'ovr-skills');
+  const ovrTarget = path.join(ovrSkillsRoot, 'photo-retouch');
+  fs.mkdirSync(ovrTarget, { recursive: true });
+  fs.writeFileSync(
+    path.join(ovrTarget, 'SKILL.md'),
+    '---\nname: photo-retouch\nx-domain: general\ndescription: "Retouch photos. Use when color grading photos. Not for SQL queries."\n---\n'
+  );
+  const ovrFile = path.join(tmp, 'gate-ovr.json');
+  fs.writeFileSync(ovrFile, JSON.stringify({
+    overrides: {
+      'photo-retouch': { domain: 'web_media', aka: ['color grading', '修照片'], not_for: ['SQL queries'] },
+    },
+  }, null, 2));
+  const ovrGate = runGate({
+    skillDir: ovrTarget,
+    skillsDirs: [ovrSkillsRoot],
+    overridesPath: ovrFile,
+    noMcp: true,
+    noSync: true,
+  });
+  assert.equal(ovrGate.exitCode, 0);
+  assert.equal(ovrGate.result.routing_smoke.expected, 'web_media/photo-retouch');
+  assert.equal(ovrGate.result.routing_smoke.pass, true);
+
+  console.log('test_dfactory.mjs PASSED (8/8)');
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }

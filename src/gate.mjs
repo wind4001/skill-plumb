@@ -112,7 +112,7 @@ export function findHardcodedUserPaths(text) {
   const hits = [];
   const winRe = /[A-Za-z]:[/\\]Users[/\\]([^/\\\s"'`>]+)/gi;
   const posixRe = /(?:^|[\s"'`(=])(\/(?:Users|home)\/([a-zA-Z0-9._-]+)\/)/g;
-  const placeholders = new Set(['user', 'username', 'your-user', 'alice', 'bob', '<user>', '<username>', 'runner', 'ci']);
+  const placeholders = new Set(['user', 'username', 'your-user', 'alice', 'bob', '<user>', '<username>', 'runner', 'ci', '...']);
 
   for (const m of String(text || '').matchAll(winRe)) {
     const userSeg = m[1].toLowerCase();
@@ -127,6 +127,54 @@ export function findHardcodedUserPaths(text) {
     }
   }
   return [...new Set(hits)];
+}
+
+export function findSkillUserPathLeaks(skillReal, rawMd) {
+  const allPaths = [];
+  const leakFiles = [];
+
+  const mdLeaks = findHardcodedUserPaths(rawMd);
+  if (mdLeaks.length > 0) {
+    allPaths.push(...mdLeaks);
+    leakFiles.push('SKILL.md');
+  }
+
+  const refsDir = path.join(skillReal, 'references');
+  if (fs.existsSync(refsDir)) {
+    function walkRefs(dir, depth) {
+      if (depth > 2) return;
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, ent.name);
+        let real;
+        try {
+          real = fs.realpathSync(full);
+          if (!isWithinRoot(skillReal, real)) continue;
+        } catch { continue; }
+        const st = fs.statSync(real);
+        if (st.isDirectory()) {
+          walkRefs(real, depth + 1);
+        } else if (st.isFile() && /\.md$/i.test(ent.name)) {
+          const refText = fs.readFileSync(real, 'utf8');
+          const leaks = findHardcodedUserPaths(refText);
+          if (leaks.length > 0) {
+            allPaths.push(...leaks);
+            leakFiles.push(path.relative(skillReal, real).replace(/\\/g, '/'));
+          }
+        }
+      }
+    }
+    try {
+      const refsReal = fs.realpathSync(refsDir);
+      if (isWithinRoot(skillReal, refsReal) && fs.statSync(refsReal).isDirectory()) {
+        walkRefs(refsReal, 0);
+      }
+    } catch { /* ignore */ }
+  }
+
+  return {
+    paths: [...new Set(allPaths)],
+    files: [...new Set(leakFiles)],
+  };
 }
 
 export function runGate(opts = {}) {
@@ -196,11 +244,11 @@ export function runGate(opts = {}) {
   }
   if (linkErrors.length > 0) failures.push({ gate: 'links_hygiene', reason: linkErrors.join('; ') });
 
-  const pathLeaks = findHardcodedUserPaths(rawMd);
-  if (pathLeaks.length > 0) {
+  const leakReport = findSkillUserPathLeaks(skillReal, rawMd);
+  if (leakReport.paths.length > 0) {
     failures.push({
       gate: 'links_hygiene',
-      reason: `SKILL.md contains hardcoded user-profile paths (${pathLeaks.slice(0, 3).join(', ')}); use <skill_dir> or relative paths`,
+      reason: `${leakReport.files.join(', ')} contains hardcoded user-profile paths (${leakReport.paths.slice(0, 3).join(', ')}); use <skill_dir> or relative paths`,
     });
   }
 
@@ -245,7 +293,7 @@ export function runGate(opts = {}) {
       for (const vf of verifyFiles) {
         const vp = path.join(skillReal, vf);
         try {
-          const vOut = execFileSync(process.execPath, [vp], { encoding: 'utf8', timeout: 30000, stdio: 'pipe' });
+          const vOut = execFileSync(process.execPath, [vp], { encoding: 'utf8', timeout: 60000, stdio: 'pipe' });
           verifyResults.push({ file: vf, status: 'PASS', summary: vOut.trim().split(/\r?\n/).pop() });
         } catch (e) {
           failures.push({ gate: 'verify_suite', reason: `${vf} failed (exit ${e.status ?? e.signal ?? 'error'}): ${String(e.stderr || e.stdout || e.message).slice(0, 200)}` });
@@ -276,9 +324,10 @@ export function runGate(opts = {}) {
       return { exitCode: 1, error: err.message };
     }
 
+    const liveSelf = live.find((x) => x.name === fm.name);
     const withoutSelf = live.filter((x) => x.name !== fm.name);
     const fmDomain = parseFrontmatterDomain(rawMd);
-    const domain = fmDomain || (live.find((x) => x.name === fm.name)?.domain) || inferDomain(fm.name, clauses.purpose, domainsMap);
+    const domain = liveSelf?.domain || fmDomain || inferDomain(fm.name, clauses.purpose, domainsMap);
     const syntheticSelf = {
       id: `${domain}/${fm.name}`,
       name: fm.name,
@@ -286,8 +335,8 @@ export function runGate(opts = {}) {
       kind: 'skill',
       purpose: clauses.purpose,
       use_when: clauses.useWhen,
-      not_for: clauses.notFor,
-      aka: [fm.name],
+      not_for: [...new Set([...clauses.notFor, ...(liveSelf?.not_for || [])])],
+      aka: [...new Set([fm.name, ...(liveSelf?.aka || [])])],
       entry: `skill:${fm.name}`,
     };
     const merged = [...withoutSelf, syntheticSelf];

@@ -16,6 +16,7 @@ function runNode(args, envExtra = {}) {
   try {
     const stdout = execFileSync('node', [PROBE, ...args], {
       encoding: 'utf8',
+      timeout: 15000,
       env: { ...process.env, ...envExtra },
     });
     return { status: 0, stdout };

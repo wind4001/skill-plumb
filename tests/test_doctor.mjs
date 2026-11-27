@@ -21,6 +21,8 @@ function snapshotHashes(rootDir) {
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-doctor-test-with spaces-'));
 try {
   // 1. Healthy fixture directory returns exit 0
+  const emptyOvr = path.join(tmp, 'empty-ovr.json');
+  fs.writeFileSync(emptyOvr, JSON.stringify({ overrides: {} }, null, 2));
   const cleanDir = path.join(tmp, 'clean-skills');
   fs.mkdirSync(path.join(cleanDir, 'alpha-db', 'references'), { recursive: true });
   fs.writeFileSync(path.join(cleanDir, 'alpha-db', 'references', 'guide.md'), '# Guide\n');
@@ -28,7 +30,7 @@ try {
     path.join(cleanDir, 'alpha-db', 'SKILL.md'),
     '---\nname: alpha-db\nx-domain: db\ndescription: "Audit Postgres schemas. Use when checking tables. Not for query tuning."\n---\n\nSee [guide](references/guide.md)\n'
   );
-  const cleanDoc = runDoctor({ skillsDirs: [cleanDir], noMcp: true });
+  const cleanDoc = runDoctor({ skillsDirs: [cleanDir], noMcp: true, overridesPath: emptyOvr });
   assert.equal(cleanDoc.exitCode, 0);
   assert.equal(cleanDoc.result.summary.findings_count, 0);
 
@@ -109,7 +111,33 @@ try {
   const noFmTable = formatDoctorReport(noFmDoc.result);
   assert.match(noFmTable, /Missing YAML frontmatter \/ name \/ Use when \| 1/);
 
-  console.log('test_doctor.mjs PASSED (5/5)');
+  // 6. MCP-only crowded domain missing not_for exits 2 and reports finding; references/*.md hardcoded user-profile path caught
+  const mcpOnlySkills = path.join(tmp, 'mcp-only-skills');
+  fs.mkdirSync(mcpOnlySkills);
+  const mcpOnlyCfg = path.join(tmp, 'mcp-only.json');
+  fs.writeFileSync(mcpOnlyCfg, JSON.stringify({
+    mcpServers: {
+      context7: {},
+      'docs-mcp-server': {},
+    },
+  }, null, 2));
+  const mcpDoc = runDoctor({ skillsDirs: [mcpOnlySkills], mcpCfgPath: mcpOnlyCfg, overridesPath: emptyOvr });
+  assert.equal(mcpDoc.exitCode, 2);
+  assert.ok(mcpDoc.result.findings.some((f) => f.kind === 'crowded_missing_not_for' && f.skill === 'mcp:docs-mcp-server'));
+
+  const refLeakSkills = path.join(tmp, 'ref-leak-skills');
+  fs.mkdirSync(path.join(refLeakSkills, 'ref-skill', 'references'), { recursive: true });
+  fs.writeFileSync(
+    path.join(refLeakSkills, 'ref-skill', 'SKILL.md'),
+    '---\nname: ref-skill\nx-domain: repo\ndescription: "Ref check. Use when checking refs. Not for db checks."\n---\n\nSee [guide](references/guide.md).\n'
+  );
+  const refLeakPath = ['/home', 'secretuser', 'tool'].join('/');
+  fs.writeFileSync(path.join(refLeakSkills, 'ref-skill', 'references', 'guide.md'), `Run \`${refLeakPath}\`.\n`);
+  const refDoc = runDoctor({ skillsDirs: [refLeakSkills], noMcp: true });
+  assert.equal(refDoc.exitCode, 2);
+  assert.ok(refDoc.result.findings.some((f) => f.kind === 'hardcoded_user_path' && f.files.includes('references/guide.md')));
+
+  console.log('test_doctor.mjs PASSED (6/6)');
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }

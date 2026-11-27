@@ -59,13 +59,13 @@ Global / Common Options:
 function printSubHelp(cmd) {
   const helps = {
     doctor: `Usage: skill-plumb doctor [--skills-dir <dir>]... [--mcp-cfg <file> | --no-mcp] [--overrides <file>] [--domains <file>] [--max-lines 150] [--max-bytes 9000] [--json] [--out <file>]`,
-    scaffold: `Usage: skill-plumb scaffold --name <slug> --domain <domain> --summary "<desc>" [--mode full|lite|ops] [--out-dir <dir>] [--skills-dir <dir>]... [--use-when "<trigger>"] [--not-for "<exclusions>"] [--dry-run] [--force]`,
+    scaffold: `Usage: skill-plumb scaffold --name <slug> --domain <domain> --summary "<desc>" [--mode full|lite|ops] [--out-dir <dir>] [--out <file>] [--skills-dir <dir>]... [--use-when "<trigger>"] [--not-for "<exclusions>"] [--dry-run] [--force]`,
     gate: `Usage: skill-plumb gate <skill_dir> [--mode auto|full|lite] [--max-lines 150] [--max-bytes 9000] [--skills-dir <dir>]... [--overrides <file>] [--domains <file>] [--catalog <file>] [--check-mirror <dir>] [--no-mcp] [--skip-routing] [--skip-verify] [--no-sync] [--out <file>]`,
     sync: `Usage: skill-plumb sync [--skills-dir <dir>]... [--mcp-cfg <file> | --no-mcp] [--overrides <file>] [--domains <file>] [--catalog <file>] [--out <file>]`,
     brief: `Usage: skill-plumb brief [--skills-dir <dir>]... [--mcp-cfg <file> | --no-mcp] [--overrides <file>] [--domains <file>] [--catalog <file>] [--out <file>]`,
     list: `Usage: skill-plumb list <domain> [--skills-dir <dir>]... [--mcp-cfg <file> | --no-mcp] [--overrides <file>] [--domains <file>] [--catalog <file>] [--out <file>]`,
     inspect: `Usage: skill-plumb inspect "<query>" [--domain <d>] [--limit 5] [--skills-dir <dir>]... [--mcp-cfg <file> | --no-mcp] [--overrides <file>] [--domains <file>] [--catalog <file>] [--out <file>]`,
-    'init-plugin': `Usage: skill-plumb init-plugin [--out-dir <dir_or_file>] [--format plugin|agents-md] [--force] [--dry-run]`,
+    'init-plugin': `Usage: skill-plumb init-plugin [--out-dir <dir_or_file>] [--out <file>] [--format plugin|agents-md] [--force] [--dry-run]`,
   };
   console.log(helps[cmd] || helps.doctor);
 }
@@ -129,7 +129,7 @@ function parseSubArgs(argv) {
     } else if (a === '--no-sync') {
       opts.noSync = true;
     } else if (VALUE_FLAGS.has(a)) {
-      if (i + 1 >= argv.length || argv[i + 1].startsWith('-')) {
+      if (i + 1 >= argv.length || !argv[i + 1].trim() || argv[i + 1].startsWith('-')) {
         return { ok: false, error: `Missing value for ${a}` };
       }
       assignValueFlag(opts, a, argv[++i]);
@@ -165,7 +165,14 @@ function writeOutFile(outPath, content) {
 
 function emitJsonAndExit(code, payload, outPath = null) {
   const serialized = JSON.stringify(payload, null, 2) + '\n';
-  if (outPath && code !== 1) writeOutFile(outPath, serialized);
+  if (outPath && code !== 1) {
+    try {
+      writeOutFile(outPath, serialized);
+    } catch (err) {
+      process.stderr.write(JSON.stringify({ exit_code: 1, error: `Failed to write --out "${outPath}": ${err.message}` }, null, 2) + '\n');
+      process.exit(1);
+    }
+  }
   if (code === 1) process.stderr.write(serialized);
   else process.stdout.write(serialized);
   process.exit(code);
@@ -213,7 +220,13 @@ if (cmd === 'doctor') {
   const out = runDoctor(opts);
   if (out.exitCode === 1) emitJsonAndExit(1, { scan_completed: false, exit_code: 1, error: out.error });
   const serialized = JSON.stringify(out.result, null, 2) + '\n';
-  if (opts.out) writeOutFile(opts.out, serialized);
+  if (opts.out) {
+    try {
+      writeOutFile(opts.out, serialized);
+    } catch (err) {
+      emitJsonAndExit(1, { scan_completed: false, exit_code: 1, error: `Failed to write --out "${opts.out}": ${err.message}` });
+    }
+  }
   if (opts.json) process.stdout.write(serialized);
   else process.stdout.write(formatDoctorReport(out.result));
   process.exit(out.exitCode);
@@ -221,11 +234,15 @@ if (cmd === 'doctor') {
   if (opts.pos.length > 0) {
     emitJsonAndExit(1, { scaffolded: false, exit_code: 1, error: `Unexpected positional arguments: ${opts.pos.join(' ')}` });
   }
-  const out = runScaffold({ ...opts, outDir: opts.outDir || opts.out });
-  if (out.exitCode === 1 && !out.result) {
-    emitJsonAndExit(1, { scaffolded: false, exit_code: 1, error: out.error });
+  try {
+    const out = runScaffold({ ...opts, outDir: opts.outDir || opts.out });
+    if (out.exitCode === 1 && !out.result) {
+      emitJsonAndExit(1, { scaffolded: false, exit_code: 1, error: out.error });
+    }
+    emitJsonAndExit(out.exitCode, out.result, opts.outDir ? opts.out : null);
+  } catch (err) {
+    emitJsonAndExit(1, { scaffolded: false, exit_code: 1, error: err.message });
   }
-  emitJsonAndExit(out.exitCode, out.result);
 } else if (cmd === 'gate') {
   if (opts.pos.length !== 1) {
     emitJsonAndExit(1, { gate_passed: false, exit_code: 1, error: 'Provide exactly one <skill_dir> path' });
@@ -233,11 +250,15 @@ if (cmd === 'doctor') {
   if (!isPositiveIntOption(opts.maxLines) || !isPositiveIntOption(opts.maxBytes)) {
     emitJsonAndExit(1, { gate_passed: false, exit_code: 1, error: '--max-lines and --max-bytes must be positive integers' });
   }
-  const out = runGate({ ...opts, skillDir: opts.pos[0], outFile: opts.catalogPath });
-  if (out.exitCode === 1 && !out.result) {
-    emitJsonAndExit(1, { gate_passed: false, exit_code: 1, error: out.error });
+  try {
+    const out = runGate({ ...opts, skillDir: opts.pos[0], outFile: opts.catalogPath });
+    if (out.exitCode === 1 && !out.result) {
+      emitJsonAndExit(1, { gate_passed: false, exit_code: 1, error: out.error });
+    }
+    emitJsonAndExit(out.exitCode, out.result, opts.out);
+  } catch (err) {
+    emitJsonAndExit(1, { gate_passed: false, exit_code: 1, error: err.message });
   }
-  emitJsonAndExit(out.exitCode, out.result, opts.out);
 } else if (cmd === 'sync') {
   if (opts.pos.length > 0) {
     emitJsonAndExit(1, { synced: false, exit_code: 1, error: `Unexpected positional arguments: ${opts.pos.join(' ')}` });
@@ -285,9 +306,13 @@ if (cmd === 'doctor') {
   if (opts.pos.length > 0) {
     emitJsonAndExit(1, { initialized: false, exit_code: 1, error: `Unexpected positional arguments: ${opts.pos.join(' ')}` });
   }
-  const out = runInitPlugin({ ...opts, outDir: opts.outDir || opts.out });
-  if (out.exitCode === 1 && !out.result) {
-    emitJsonAndExit(1, { initialized: false, exit_code: 1, error: out.error });
+  try {
+    const out = runInitPlugin({ ...opts, outDir: opts.outDir || opts.out });
+    if (out.exitCode === 1 && !out.result) {
+      emitJsonAndExit(1, { initialized: false, exit_code: 1, error: out.error });
+    }
+    emitJsonAndExit(out.exitCode, out.result, opts.outDir ? opts.out : null);
+  } catch (err) {
+    emitJsonAndExit(1, { initialized: false, exit_code: 1, error: err.message });
   }
-  emitJsonAndExit(out.exitCode, out.result);
 }

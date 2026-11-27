@@ -20,6 +20,7 @@ export function tokenize(text) {
   const ascii = new Set();
   const cjk2 = new Set();
   const cjk3 = new Set();
+  const mixed = new Set();
 
   const words = s.match(/[a-z0-9][a-z0-9_.+/-]{1,}/g) || [];
   for (const w of words) {
@@ -39,7 +40,22 @@ export function tokenize(text) {
       if (!CJK_STOP_GRAMS.has(g3)) cjk3.add(g3);
     }
   }
-  return { ascii, cjk2, cjk3, raw: s };
+
+  // Collapse whitespace strictly at CJK<->ASCII boundaries so "去 AI 味" matches "去AI味"
+  const collapsed = s
+    .replace(/([\u4e00-\u9fff])\s+([a-z0-9])/g, '$1$2')
+    .replace(/([a-z0-9])\s+([\u4e00-\u9fff])/g, '$1$2');
+  const mixedMatches = collapsed.match(/[\u4e00-\u9fff][a-z0-9]{2,10}[\u4e00-\u9fff]?|[a-z0-9]{2,10}[\u4e00-\u9fff]/g) || [];
+  for (const m of mixedMatches) {
+    mixed.add(m);
+    const full = m.match(/^([\u4e00-\u9fff])([a-z0-9]+)([\u4e00-\u9fff])$/);
+    if (full) {
+      mixed.add(full[1] + full[2]);
+      mixed.add(full[2] + full[3]);
+    }
+  }
+
+  return { ascii, cjk2, cjk3, mixed, raw: s };
 }
 
 function overlapScore(qTok, fTok, excludeAscii = null) {
@@ -50,6 +66,14 @@ function overlapScore(qTok, fTok, excludeAscii = null) {
     if (fTok.ascii.has(t)) {
       score += 2.2;
       hits.push(t);
+    }
+  }
+  if (qTok.mixed && fTok.mixed) {
+    for (const m of qTok.mixed) {
+      if (fTok.mixed.has(m)) {
+        score += 2.0;
+        hits.push(m);
+      }
     }
   }
   for (const g of qTok.cjk3) {
@@ -92,7 +116,7 @@ export function detectDirectNoTool(query) {
   }
 
   const literalEdit = /(?:把.{1,40}(?:里的|中的|第\d+行).{0,25}(?:改成|改为|替换成|删掉|删除|去掉)|只改.{1,25}(?:文案|标题|副标题|常量|版本号|拼写|错别字)|fix (?:a )?typo\b|rename local\b|remove ['"`(]?draft['"`)]?)/i;
-  const simpleReadOrStatus = /^(?:(?:看看|查一下|列出|读取|统计|执行|跑一下).{0,20}(?:git log|git status|git diff|行数|前\s*\d+\s*行|后\s*\d+\s*行|package\.json|tsconfig(?:\.json)?|npm test|pytest|格式化\s*json)(?:\s*(?:状态|输出|就行|即可))?\s*[.?!。？！]*$|(?:run|check|show|read|list)\s+(?:git status|git log|git diff|package\.json|tsconfig\.json|npm test|pytest)(?:\s+(?:now|please|output|status))?\s*[.?!]*$)/i;
+  const simpleReadOrStatus = /^(?:(?:看看|查一下|列出|读取|统计|执行|跑一下).{0,20}(?:git log|git status|git diff|行数|前\s*\d+\s*行|后\s*\d+\s*行|package\.json|tsconfig(?:\.json)?|npm test|pytest|格式化\s*json)(?:\s*(?:状态|输出|就行|即可))?\s*[.?!。？！]*$|(?:run|check|show|read|list)\s+(?:git status|git log|git diff|package\.json|tsconfig\.json|npm test|pytest)(?:\s+(?:now|please|output|status))?\s*[.?!]*$|(?:git status|git log|git diff|npm test|pytest)(?:\s+(?:--short|--stat|--oneline|-s))?\s*[.?!。？！]*$)/i;
   const explicitNoSkill = /(?:不用查文档|直接动手|不需要扩展工具|just read|direct edit|no skill needed)/i;
 
   if (literalEdit.test(raw) || simpleReadOrStatus.test(s) || explicitNoSkill.test(raw)) {
@@ -178,23 +202,40 @@ export function scoreTwoStage(catalog, query, opts = {}) {
       const priorText = `${domDef.brief || ''} ${domDef.priors || ''}`;
       const priorHit = overlapScore(qTok, tokenize(priorText));
       let maxMemberHit = 0;
+      let maxMemberUseHit = 0;
+      const memberHits = [];
       for (const it of items) {
         const idxTok = tokenize(`${it.id} ${(it.aka || []).join(' ')}`);
-        const m = overlapScore(qTok, idxTok).score;
-        if (m > maxMemberHit) maxMemberHit = m;
+        const mRes = overlapScore(qTok, idxTok);
+        if (mRes.score > maxMemberHit) {
+          maxMemberHit = mRes.score;
+          memberHits.push(...mRes.hits);
+        }
+        const useTok = tokenize(`${it.use_when || ''} ${it.purpose || ''}`);
+        const uRes = overlapScore(qTok, useTok);
+        if (uRes.score > maxMemberUseHit) {
+          maxMemberUseHit = uRes.score;
+          memberHits.push(...uRes.hits);
+        }
       }
-      const domScore = Number((priorHit.score * 0.9 + maxMemberHit * 0.7).toFixed(3));
-      domainScores.push({ domain: dom, score: domScore, hits: priorHit.hits.slice(0, 5) });
+      const domScore = Number((priorHit.score * 0.9 + maxMemberHit * 0.7 + maxMemberUseHit * 0.45).toFixed(3));
+      domainScores.push({
+        domain: dom,
+        score: domScore,
+        hits: [...new Set([...priorHit.hits, ...memberHits])].slice(0, 5),
+      });
     }
     domainScores.sort((a, b) => b.score - a.score);
   }
 
   const topDomScore = domainScores[0]?.score || 0;
   const selectedDomains = [];
-  for (const ds of domainScores) {
-    if (selectedDomains.length === 0) selectedDomains.push(ds.domain);
-    else if (selectedDomains.length < 2 && ds.score >= topDomScore * 0.45 && ds.score > 0.8) selectedDomains.push(ds.domain);
-    else if (selectedDomains.length < 3 && ds.score >= topDomScore * 0.75 && ds.score > 1.5) selectedDomains.push(ds.domain);
+  if (opts.domain || topDomScore > 0) {
+    for (const ds of domainScores) {
+      if (selectedDomains.length === 0) selectedDomains.push(ds.domain);
+      else if (selectedDomains.length < 2 && ds.score >= topDomScore * 0.45 && ds.score > 0.8) selectedDomains.push(ds.domain);
+      else if (selectedDomains.length < 3 && ds.score >= topDomScore * 0.75 && ds.score > 1.5) selectedDomains.push(ds.domain);
+    }
   }
 
   const candidatePool = selectedDomains.flatMap((d) => byDomain.get(d) || []);

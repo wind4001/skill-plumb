@@ -135,7 +135,26 @@ try {
   assert.equal(scafOutRes.status, 0, scafOutRes.stderr);
   assert.ok(fs.existsSync(path.join(scafOutFlagDir, 'out-flag-skill', 'SKILL.md')));
 
-  console.log('test_cli.mjs PASSED (6/6)');
+  // 7. Reject space-separated empty values ("") and fail cleanly with exit 1 JSON on --out <existing_dir> (no EISDIR crash)
+  const emptySkillsArg = runCli(['doctor', '--skills-dir', '', '--no-mcp', '--json']);
+  assert.equal(emptySkillsArg.status, 1);
+  assert.equal(JSON.parse(emptySkillsArg.stderr).exit_code, 1);
+
+  const emptyCatArg = runCli(['sync', '--skills-dir', skillsDir, '--no-mcp', '--catalog', '']);
+  assert.equal(emptyCatArg.status, 1);
+  assert.equal(JSON.parse(emptyCatArg.stderr).exit_code, 1);
+
+  const existingDir = path.join(tmp, 'existing-dir');
+  fs.mkdirSync(existingDir, { recursive: true });
+  const docEisdir = runCli(['doctor', '--skills-dir', skillsDir, '--no-mcp', '--out', existingDir]);
+  assert.equal(docEisdir.status, 1);
+  assert.match(JSON.parse(docEisdir.stderr).error, /Failed to write --out/);
+
+  const gateEisdir = runCli(['gate', path.join(skillsDir, 'lockfile-cve-check'), '--skills-dir', skillsDir, '--no-mcp', '--no-sync', '--skip-verify', '--out', existingDir]);
+  assert.equal(gateEisdir.status, 1);
+  assert.match(JSON.parse(gateEisdir.stderr).error, /Failed to write --out/);
+
+  console.log('test_cli.mjs PASSED (7/7)');
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }

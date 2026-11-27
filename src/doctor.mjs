@@ -18,7 +18,7 @@ import {
   resolveCatalogContext,
 } from './catalog.mjs';
 import { collectSkillEntries } from './discovery.mjs';
-import { findHardcodedUserPaths, measureSkillMarkdown, stripFencedCodeBlocks } from './gate.mjs';
+import { findSkillUserPathLeaks, measureSkillMarkdown, stripFencedCodeBlocks } from './gate.mjs';
 
 function isWithinRoot(rootReal, targetReal) {
   const rel = path.relative(rootReal, targetReal);
@@ -79,7 +79,25 @@ export function runDoctor(opts = {}) {
   const soloMissingNotFor = [];
 
   for (const item of catalog) {
-    if (item.kind !== 'skill') continue;
+    if (item.kind !== 'skill') {
+      const crowdedMcp = crowdedByName.get(item.name);
+      if (crowdedMcp) {
+        findings.push({
+          kind: 'crowded_missing_not_for',
+          severity: 'high',
+          skill: item.name,
+          entry_kind: item.kind,
+          domain: item.domain,
+          domain_count: crowdedMcp.domain_count,
+          file: ctx.mcpCfgPath ? ctx.mcpCfgPath.replace(/\\/g, '/') : null,
+          detail: `Missing \`Not for\` on ${item.kind} "${item.name}" in crowded domain "${item.domain}" (${crowdedMcp.domain_count} competing entries)`,
+          suggested_override: crowdedMcp.suggested_override,
+        });
+      } else if (!item.not_for || item.not_for.length === 0) {
+        soloMissingNotFor.push(item.id);
+      }
+      continue;
+    }
     const disk = entryByName.get(item.name);
     if (!disk) continue;
 
@@ -149,17 +167,18 @@ export function runDoctor(opts = {}) {
       }
     }
 
-    const leaks = findHardcodedUserPaths(raw);
-    if (leaks.length > 0) {
-      pathLeakSkills.push({ name: item.name, paths: leaks });
+    const leakReport = findSkillUserPathLeaks(disk.realDir, raw);
+    if (leakReport.paths.length > 0) {
+      pathLeakSkills.push({ name: item.name, paths: leakReport.paths, files: leakReport.files });
       findings.push({
         kind: 'hardcoded_user_path',
         severity: 'high',
         skill: item.name,
         domain: item.domain,
         file: disk.mdPath.replace(/\\/g, '/'),
-        paths: leaks,
-        detail: `Hardcoded user-profile path(s) in SKILL.md: ${leaks.slice(0, 3).join(', ')}`,
+        files: leakReport.files,
+        paths: leakReport.paths,
+        detail: `Hardcoded user-profile path(s) in ${leakReport.files.join(', ')}: ${leakReport.paths.slice(0, 3).join(', ')}`,
       });
     }
 
@@ -180,7 +199,8 @@ export function runDoctor(opts = {}) {
     }
   }
 
-  for (const w of ctx.overridesRes.warnings || []) {
+  const overrideWarnings = buildLiveCatalog.lastMeta?.overrideWarnings || ctx.overridesRes.warnings || [];
+  for (const w of overrideWarnings) {
     findings.push({
       kind: 'override_schema_warning',
       severity: 'medium',
@@ -218,7 +238,7 @@ export function runDoctor(opts = {}) {
         crowded_missing_not_for_count: crowdedList.length,
         broken_links_count: brokenLinkSkills.reduce((acc, s) => acc + s.issues.length, 0),
         hardcoded_path_count: pathLeakSkills.length,
-        override_warnings_count: (ctx.overridesRes.warnings || []).length,
+        override_warnings_count: overrideWarnings.length,
         solo_missing_not_for_count: soloMissingNotFor.length,
       },
       findings,

@@ -102,9 +102,14 @@ if (path.resolve(process.argv[1] || '') === path.resolve(fileURLToPath(import.me
   }
   const serialized = JSON.stringify(out.result, null, 2) + '\n';
   if (parsed.opts.out) {
-    const outAbs = path.resolve(parsed.opts.out);
-    fs.mkdirSync(path.dirname(outAbs), { recursive: true });
-    fs.writeFileSync(outAbs, serialized, 'utf8');
+    try {
+      const outAbs = path.resolve(parsed.opts.out);
+      fs.mkdirSync(path.dirname(outAbs), { recursive: true });
+      fs.writeFileSync(outAbs, serialized, 'utf8');
+    } catch (err) {
+      process.stderr.write(JSON.stringify({ scan_completed: false, exit_code: 1, error: `Failed to write --out: ${err.message}` }, null, 2) + '\n');
+      process.exit(1);
+    }
   }
   process.stdout.write(serialized);
   process.exit(out.exitCode);

@@ -149,8 +149,8 @@ export function parseDescription(raw) {
 
 export function extractRoutingClauses(desc) {
   const text = String(desc || '').trim();
-  const useRe = /(?:^|[\s.;。；])(?:Use when|MUST USE|触发(?:方式|词|场景)*|何时用)[：:\s]*/i;
-  const notRe = /(?:^|[\s.;。；])(?:Not for|不用于|Don't use for|不适用于)[：:\s]*/i;
+  const useRe = /(?:^|[\s.;,，。；])(?:Use (?:when|immediately (?:before|when|after))|MUST USE|触发(?:方式|词|场景)*|何时用)[：:\s]*/i;
+  const notRe = /(?:^|[\s.;,，。；])(?:Not for|不用于|Don't use for|不适用于)[：:\s]*/i;
   const uMatch = useRe.exec(text);
   const nMatch = notRe.exec(text);
 
@@ -277,6 +277,16 @@ export function buildLiveCatalog(opts = {}) {
 
   const domainsMap = ctx.domainsRes.domains || DEFAULT_DOMAINS;
   const overrides = ctx.overridesRes.overrides || {};
+  const overrideWarnings = [...(ctx.overridesRes.warnings || [])];
+  for (const [ovrKey, ovrVal] of Object.entries(overrides)) {
+    if (ovrVal?.domain && !(ovrVal.domain in domainsMap)) {
+      overrideWarnings.push({
+        skill: ovrKey,
+        field: 'domain',
+        message: `Unknown domain "${ovrVal.domain}" in router_overrides.json (not in configured domains)`,
+      });
+    }
+  }
   const entries = [];
   const skillEntries = collectSkillEntries(ctx.skillDirs);
 
@@ -352,7 +362,7 @@ export function buildLiveCatalog(opts = {}) {
     overridesPath: ctx.overridesPath,
     domainsConfigPath: ctx.domainsRes.configPath,
     domains: domainsMap,
-    overrideWarnings: ctx.overridesRes.warnings,
+    overrideWarnings,
   };
 
   return entries;

@@ -7,6 +7,7 @@ import {
   buildLiveCatalog,
   detectDirectNoTool,
   execSafe,
+  extractRoutingClauses,
   loadDomainsConfig,
   loadOrSyncCatalog,
   parseDescription,
@@ -301,7 +302,46 @@ try {
     assert.equal(cmdOut, 'hello world|second arg');
   }
 
-  console.log('test_router.mjs PASSED (14/14)');
+  // 15. General-domain Chinese queries, topDomScore===0 -> NONE, CJK+ASCII compound matching, bare git status, Use immediately before, unknown override domain
+  const genSkillsDir = path.join(tmp, 'gen-skills');
+  fs.mkdirSync(path.join(genSkillsDir, 'photo-fix'), { recursive: true });
+  fs.mkdirSync(path.join(genSkillsDir, 'story-deslop'), { recursive: true });
+  fs.mkdirSync(path.join(genSkillsDir, 'story-long-write'), { recursive: true });
+  fs.mkdirSync(path.join(genSkillsDir, 'quality-gate'), { recursive: true });
+  fs.writeFileSync(path.join(genSkillsDir, 'photo-fix', 'SKILL.md'), '---\nname: photo-fix\nx-domain: web_media\ndescription: "Retouch photos. Use when editing photo lighting. Not for novel writing."\n---\n');
+  fs.writeFileSync(path.join(genSkillsDir, 'story-deslop', 'SKILL.md'), '---\nname: story-deslop\ndescription: "小说正文去AI味润色。Use when 「帮这章去AI味」「网文去AI味润色」。Not for 制定长篇全局写作纪律。"\n---\n');
+  fs.writeFileSync(path.join(genSkillsDir, 'story-long-write', 'SKILL.md'), '---\nname: story-long-write\ndescription: "长篇网文规划与连载写作。Use when 「我想写小说」「帮我开书」「出卷纲」。Not for 短篇小说创作。"\n---\n');
+  fs.writeFileSync(path.join(genSkillsDir, 'quality-gate', 'SKILL.md'), '---\nname: quality-gate\nx-domain: meta_collab\ndescription: "长篇全局质量闸门。Use when 制定长篇写作纪律或质量体系，不用于单章已成稿做三层表达式去 AI 味润色（use story-deslop）。"\n---\n');
+
+  const genOvrPath = path.join(tmp, 'gen-overrides.json');
+  fs.writeFileSync(genOvrPath, JSON.stringify({
+    overrides: {
+      'photo-fix': { domain: 'web_media', aka: ['修照片'] },
+      'bogus-entry': { domain: 'no_such_domain' },
+    },
+  }, null, 2));
+
+  const genCat = buildLiveCatalog({ skillsDirs: [genSkillsDir], noMcp: true, overridesPath: genOvrPath });
+  assert.ok(buildLiveCatalog.lastMeta.overrideWarnings.some((w) => w.field === 'domain' && /no_such_domain/.test(w.message)));
+
+  const novelRes = scoreTwoStage(genCat, '我想写小说');
+  assert.equal(novelRes.predicted, 'general/story-long-write');
+  const deslopRes = scoreTwoStage(genCat, '帮这章去AI味');
+  assert.equal(deslopRes.predicted, 'general/story-deslop');
+  const unrelatedRes = scoreTwoStage(genCat, 'totally_unrelated_quantum_foobar');
+  assert.equal(unrelatedRes.predicted, 'NONE');
+  assert.deepEqual(unrelatedRes.stage1_domains, []);
+
+  assert.equal(detectDirectNoTool('git status').isDirect, true);
+  assert.equal(detectDirectNoTool('git status --short').isDirect, true);
+  assert.equal(detectDirectNoTool('git status audit secrets').isDirect, false);
+
+  const immClauses = extractRoutingClauses('Verify evidence. Use immediately before any completion claim, commit, or PR，不用于 early exploration.');
+  assert.equal(immClauses.hasUseWhen, true);
+  assert.equal(immClauses.hasNotFor, true);
+  assert.match(immClauses.notFor[0], /early exploration/);
+
+  console.log('test_router.mjs PASSED (15/15)');
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
