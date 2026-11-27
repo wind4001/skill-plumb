@@ -1,0 +1,16 @@
+{
+  "_doc": "Optional custom domains merged onto SkillPlumb's built-in engineering domains (place as ./domains.json or pass --domains)",
+  "domains": {
+    "ml_ops": {
+      "brief": "ML training pipelines, dataset validation, GPU job scheduling & model evaluation",
+      "priors": "pytorch tensorflow huggingface lora finetune gpu cuda training eval dataset",
+      "namePatterns": [
+        "^ml-",
+        "^train-"
+      ],
+      "textPatterns": [
+        "\\b(?:pytorch|tensorflow|lora|finetune|cuda|dataset)\\b"
+      ]
+    }
+  }
+}

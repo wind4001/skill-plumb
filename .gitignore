@@ -1,0 +1,8 @@
+node_modules/
+.skill-plumb/
+live_catalog.json
+live_catalog.meta.json
+coverage/
+.DS_Store
+Thumbs.db
+*.log

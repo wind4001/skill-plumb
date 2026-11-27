@@ -1,0 +1,30 @@
+---
+name: {{SLUG}}
+x-domain: {{DOMAIN}}
+description: >-
+  {{SUMMARY}} Use when {{USE_WHEN}}. Not for {{NOT_FOR}}.
+---
+
+# {{TITLE}}
+
+## Step 1: Run Deterministic Probe
+
+Run the zero-dependency probe before making assumptions about environment state:
+
+```bash
+node {{SKILL_REF_DIR}}/scripts/probe_{{SCRIPT_STEM}}.mjs "<target_path>"
+```
+
+| Exit Code | `exit_meaning` | Next Action |
+|---:|---|---|
+| `0` | `ready_or_clean` | Proceed or report verified JSON results |
+| `1` | CLI/arg error, missing target, or symlink escape | Fix inputs and rerun; never guess past errors |
+| `2` | Findings or missing prerequisites | Inspect `findings[]` and surface actionable items or ask user |
+
+## Behavioral Boundaries
+
+1. **Never override user decisions**: Escalate permission boundaries, destructive actions, or ambiguous trade-offs with concrete evidence.
+2. **Never echo plaintext secrets**: Report key existence (`*_set`) or `[REDACTED]` markers only; never log raw credentials or tokens.
+3. **Verify before claiming**: Re-run the probe and verification suite after edits and report any unverified scope explicitly.
+
+Detailed reference: [references/guide.md](references/guide.md)

@@ -1,0 +1,49 @@
+#!/usr/bin/env node
+/**
+ * Black-box regression verification skeleton for `{{SLUG}}` (`verify_{{SCRIPT_STEM}}.mjs`).
+ */
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const SKILL_DIR = path.dirname(fileURLToPath(import.meta.url));
+const PROBE = path.join(SKILL_DIR, 'scripts', 'probe_{{SCRIPT_STEM}}.mjs');
+
+function runNode(args, envExtra = {}) {
+  try {
+    const stdout = execFileSync('node', [PROBE, ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, ...envExtra },
+    });
+    return { status: 0, stdout };
+  } catch (e) {
+    return { status: e.status ?? 1, stdout: e.stdout || '', stderr: e.stderr || '' };
+  }
+}
+
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), '{{SCRIPT_STEM}}-verify-with spaces-'));
+try {
+  // 1. --help passes with 0
+  assert.equal(runNode(['--help']).status, 0);
+
+  // 2. Bogus CLI flag & missing path reject with exit 1
+  assert.equal(runNode(['--bogus-d-gate-flag']).status, 1);
+  assert.equal(runNode([path.join(tmp, 'does-not-exist')]).status, 1);
+
+  // 3. Clean target dir passes cleanly with --out written & zero secret leak
+  const cleanDir = path.join(tmp, 'clean');
+  fs.mkdirSync(cleanDir);
+  const outPath = path.join(tmp, 'out.json');
+  const sentinel = ['test', 'secret', 'must-not-echo-999'].join('-');
+  const okRes = runNode([cleanDir, '--out', outPath], { TEST_API_KEY: sentinel });
+  assert.ok([0, 2].includes(okRes.status));
+  assert.ok(!okRes.stdout.includes(sentinel));
+  assert.equal(JSON.parse(fs.readFileSync(outPath, 'utf8')).scan_completed, true);
+
+  console.log('ALL {{SLUG}} VERIFICATION CHECKS PASSED (3/3)');
+} finally {
+  fs.rmSync(tmp, { recursive: true, force: true });
+}

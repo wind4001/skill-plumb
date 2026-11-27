@@ -1,0 +1,28 @@
+{
+  "_doc": "Zero-invasion per-skill domain, aka, and not_for overrides without editing third-party SKILL.md files",
+  "overrides": {
+    "third-party-postgres-linter": {
+      "domain": "db",
+      "aka": [
+        "postgres lint",
+        "pg schema check",
+        "sql table audit"
+      ],
+      "not_for": [
+        "live runtime slow-query EXPLAIN analysis (use pg-query-tuner)",
+        "static application code style checks or git pre-publish audits"
+      ]
+    },
+    "external-cli-helper": {
+      "domain": "meta_collab",
+      "aka": [
+        "headless cli run",
+        "one-shot cli prompt"
+      ],
+      "not_for": [
+        "direct local file edits or standard git status checks",
+        "multi-agent code review workflows"
+      ]
+    }
+  }
+}
