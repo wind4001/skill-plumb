@@ -12,6 +12,7 @@ import {
   safeReadTextFile,
   isPathInsideRoot,
   normalizePosix,
+  realpathNative,
 } from './shared.mjs';
 
 const EXTERNAL_SCHEME_RE = /^(?:https?:\/\/|mailto:|tel:|data:|javascript:|\/\/)/i;
@@ -178,7 +179,7 @@ export async function run(options = {}) {
   let rootBoundaryReal = walked.rootReal;
   if (gitInfo.is_work_tree && gitInfo.repo_root) {
     try {
-      rootBoundaryReal = fs.realpathSync(gitInfo.repo_root);
+      rootBoundaryReal = realpathNative(gitInfo.repo_root);
     } catch {}
   }
 
@@ -317,7 +318,7 @@ export async function run(options = {}) {
 
         // Verify resolved realpath does not escape repo via symlink / Windows junction
         try {
-          const realTarget = fs.realpathSync(resolved);
+          const realTarget = realpathNative(resolved);
           if (!isPathInsideRoot(realTarget, rootBoundaryReal)) {
             findings.push({
               severity: 'high',

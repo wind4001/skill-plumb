@@ -13,6 +13,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+function realpathNative(p) {
+  return typeof fs.realpathSync.native === 'function' ? fs.realpathSync.native(p) : fs.realpathSync(p);
+}
+
 function isWithinRoot(rootReal, targetReal) {
   const rel = path.relative(rootReal, targetReal);
   return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
@@ -176,7 +180,7 @@ function resolveContainedFile(rootReal, filename) {
   }
   let fileReal;
   try {
-    fileReal = fs.realpathSync(target);
+    fileReal = realpathNative(target);
   } catch (err) {
     const kind = lst.isSymbolicLink() ? 'Broken symlink' : 'Unreadable file';
     return { ok: false, error: `${kind} for ${filename}: ${err.message}` };
@@ -201,7 +205,7 @@ export function runAudit(rawProjectDir) {
   }
   let rootReal;
   try {
-    rootReal = fs.realpathSync(absDir);
+    rootReal = realpathNative(absDir);
   } catch (err) {
     return { exitCode: 1, error: `Cannot resolve project directory: ${err.message}` };
   }

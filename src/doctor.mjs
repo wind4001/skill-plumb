@@ -17,7 +17,7 @@ import {
   parseDescription,
   resolveCatalogContext,
 } from './catalog.mjs';
-import { collectSkillEntries } from './discovery.mjs';
+import { collectSkillEntries, realpathNative } from './discovery.mjs';
 import { findSkillUserPathLeaks, measureSkillMarkdown, stripFencedCodeBlocks } from './gate.mjs';
 
 function isWithinRoot(rootReal, targetReal) {
@@ -39,7 +39,7 @@ function checkRelativeLinks(skillReal, rawMd) {
     if (!fs.existsSync(resolved)) {
       issues.push({ type: 'broken_link', target });
     } else {
-      const realT = fs.realpathSync(resolved);
+      const realT = realpathNative(resolved);
       if (!isWithinRoot(skillReal, realT)) {
         issues.push({ type: 'escaping_link', target });
       }

@@ -6,6 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
+export function realpathNative(p) {
+  return typeof fs.realpathSync.native === 'function' ? fs.realpathSync.native(p) : fs.realpathSync(p);
+}
+
 export function discoverSkillDirs({ skillsDirs = null, cwd = process.cwd() } = {}) {
   if (Array.isArray(skillsDirs) && skillsDirs.length > 0) {
     const seen = new Set();
@@ -15,7 +19,7 @@ export function discoverSkillDirs({ skillsDirs = null, cwd = process.cwd() } = {
       const abs = path.resolve(cwd, dir);
       let key = abs;
       try {
-        if (fs.existsSync(abs)) key = fs.realpathSync(abs);
+        if (fs.existsSync(abs)) key = realpathNative(abs);
       } catch { /* ignore */ }
       if (!seen.has(key)) {
         seen.add(key);
@@ -39,7 +43,7 @@ export function discoverSkillDirs({ skillsDirs = null, cwd = process.cwd() } = {
   for (const dir of candidates) {
     try {
       if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue;
-      const real = fs.realpathSync(dir);
+      const real = realpathNative(dir);
       if (!seen.has(real)) {
         seen.add(real);
         existing.push(dir);
@@ -69,8 +73,8 @@ export function collectSkillEntries(skillDirs) {
       const mdPath = path.join(dir, 'SKILL.md');
       try {
         if (!fs.existsSync(mdPath) || !fs.statSync(mdPath).isFile()) continue;
-        const realMd = fs.realpathSync(mdPath);
-        const realDir = fs.realpathSync(dir);
+        const realMd = realpathNative(mdPath);
+        const realDir = realpathNative(dir);
         if (seenFiles.has(realMd) || seenNames.has(name)) continue;
         seenFiles.add(realMd);
         seenNames.add(name);

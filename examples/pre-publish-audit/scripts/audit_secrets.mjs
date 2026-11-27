@@ -15,6 +15,7 @@ import {
   safeReadTextFile,
   redactSnippet,
   normalizePosix,
+  realpathNative,
   isTestOrFixturePath,
 } from './shared.mjs';
 
@@ -502,7 +503,7 @@ export async function run(options = {}) {
   // Confirm untracked sensitive filenames via ground-truth `git add -n` (per SKILL.md §4)
   if (gitSets.ok && untrackedSensitiveCandidates.length > 0) {
     const dry = verifyGitAddDryRun(targetDir, untrackedSensitiveCandidates);
-    const repoRootReal = gitInfo.repo_root ? fs.realpathSync(gitInfo.repo_root) : null;
+    const repoRootReal = gitInfo.repo_root ? realpathNative(gitInfo.repo_root) : null;
     const targetReal = walked.rootReal;
     const subdirPrefix = repoRootReal && gitInfo.is_subdir
       ? normalizePosix(path.relative(repoRootReal, targetReal)) + '/'

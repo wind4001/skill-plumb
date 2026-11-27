@@ -15,6 +15,7 @@ import {
   safeReadTextFile,
   maskEmail,
   normalizePosix,
+  realpathNative,
   isTestOrFixturePath,
 } from './shared.mjs';
 
@@ -417,7 +418,7 @@ export async function run(options = {}) {
   const privacyUntrackedConfirmed = [];
   if (gitSets.ok && privacyUntrackedCandidates.length > 0) {
     const dry = verifyGitAddDryRun(targetDir, privacyUntrackedCandidates);
-    const repoRootReal = gitInfo.repo_root ? fs.realpathSync(gitInfo.repo_root) : null;
+    const repoRootReal = gitInfo.repo_root ? realpathNative(gitInfo.repo_root) : null;
     const subdirPrefix = repoRootReal && gitInfo.is_subdir
       ? normalizePosix(path.relative(repoRootReal, walked.rootReal)) + '/'
       : '';

@@ -106,6 +106,10 @@ export function normalizePosix(p) {
   return String(p || '').replace(/\\/g, '/');
 }
 
+export function realpathNative(p) {
+  return typeof fs.realpathSync.native === 'function' ? fs.realpathSync.native(p) : fs.realpathSync(p);
+}
+
 const TEST_OR_FIXTURE_RE = /(?:^|\/)(?:__tests__|__mocks__|tests?|specs?|fixtures?|mocks?)\/|\.(?:test|spec)\.[^/]+$|(?:^|\/)verify_[^/]+\.mjs$/i;
 
 export function isTestOrFixturePath(relPath) {
@@ -237,8 +241,8 @@ export function findEnclosingGitMarker(targetDir) {
   const repoRoot = top.status === 0 && top.stdout.trim() ? path.resolve(top.stdout.trim()) : null;
   let absReal = abs;
   let rootReal = repoRoot;
-  try { absReal = fs.realpathSync(abs); } catch {}
-  try { if (repoRoot) rootReal = fs.realpathSync(repoRoot); } catch {}
+  try { absReal = realpathNative(abs); } catch {}
+  try { if (repoRoot) rootReal = realpathNative(repoRoot); } catch {}
   const isSubdir = !!(rootReal && absReal.toLowerCase() !== rootReal.toLowerCase());
 
   const head = runGit(['rev-parse', '--verify', 'HEAD'], abs);
@@ -265,8 +269,8 @@ export function getGitFileSets(targetDir, gitInfo) {
   const absTarget = path.resolve(targetDir);
   let targetReal = absTarget;
   let rootReal = path.resolve(gitInfo.repo_root);
-  try { targetReal = fs.realpathSync(absTarget); } catch {}
-  try { rootReal = fs.realpathSync(rootReal); } catch {}
+  try { targetReal = realpathNative(absTarget); } catch {}
+  try { rootReal = realpathNative(rootReal); } catch {}
 
   const trackedRes = runGit(['ls-files', '-z'], absTarget);
   if (trackedRes.error || trackedRes.status !== 0) {
@@ -346,7 +350,7 @@ export function verifyGitAddDryRun(targetDir, relPaths) {
 export function walkSafe(rootDir, opts = {}) {
   const skipDirs = opts.skipDirs || DEFAULT_SKIP_DIRS;
   const absRoot = path.resolve(rootDir);
-  const rootReal = fs.realpathSync(absRoot);
+  const rootReal = realpathNative(absRoot);
   const files = [];
   const skipped = [];
   const visitedDirs = new Set([rootReal]);
@@ -357,7 +361,7 @@ export function walkSafe(rootDir, opts = {}) {
       entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch (e) {
       skipped.push({
-        path: normalizePosix(path.relative(absRoot, dir)) || '.',
+        path: normalizePosix(path.relative(rootReal, dir)) || '.',
         reason: `unreadable_dir: ${e.code || e.message}`,
       });
       return;
@@ -365,7 +369,7 @@ export function walkSafe(rootDir, opts = {}) {
 
     for (const ent of entries) {
       const full = path.join(dir, ent.name);
-      const rel = normalizePosix(path.relative(absRoot, full));
+      const rel = normalizePosix(path.relative(rootReal, full));
       let lst;
       try {
         lst = fs.lstatSync(full);
@@ -377,7 +381,7 @@ export function walkSafe(rootDir, opts = {}) {
       if (lst.isSymbolicLink()) {
         let targetReal;
         try {
-          targetReal = fs.realpathSync(full);
+          targetReal = realpathNative(full);
         } catch (e) {
           skipped.push({ path: rel, reason: `broken_symlink: ${e.code || e.message}` });
           continue;
@@ -407,7 +411,7 @@ export function walkSafe(rootDir, opts = {}) {
       if (lst.isDirectory()) {
         if (skipDirs.has(ent.name)) continue;
         let dirReal = full;
-        try { dirReal = fs.realpathSync(full); } catch {}
+        try { dirReal = realpathNative(full); } catch {}
         if (!isPathInsideRoot(dirReal, rootReal)) {
           skipped.push({ path: rel, reason: 'dir_outside_repo' });
           continue;
@@ -421,7 +425,7 @@ export function walkSafe(rootDir, opts = {}) {
     }
   }
 
-  walk(absRoot);
+  walk(rootReal);
   return { rootReal, files, skipped };
 }
 

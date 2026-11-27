@@ -9,6 +9,10 @@ import { fileURLToPath } from 'node:url';
 
 const SKILL_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
+function realpathNative(p) {
+  return typeof fs.realpathSync.native === 'function' ? fs.realpathSync.native(p) : fs.realpathSync(p);
+}
+
 function findExecutable(name) {
   const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
   const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
@@ -88,7 +92,7 @@ Exit codes:
 export function runProbe(rawTarget, explicitCli = null) {
   const abs = path.resolve(rawTarget || '.');
   if (!fs.existsSync(abs)) return { exitCode: 1, error: `Target path not found: ${rawTarget}` };
-  const realTarget = fs.realpathSync(abs);
+  const realTarget = realpathNative(abs);
   if (!fs.statSync(realTarget).isDirectory()) {
     return { exitCode: 1, error: `Target path is not a directory: ${rawTarget}` };
   }

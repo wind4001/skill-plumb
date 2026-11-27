@@ -17,6 +17,7 @@ import {
   syncLiveCatalog,
 } from './catalog.mjs';
 import { DEFAULT_DOMAINS, inferDomain, loadDomainsConfig, parseFrontmatterDomain } from './domains.mjs';
+import { realpathNative } from './discovery.mjs';
 import { scoreTwoStage } from './scorer.mjs';
 
 function isWithinRoot(rootReal, targetReal) {
@@ -147,7 +148,7 @@ export function findSkillUserPathLeaks(skillReal, rawMd) {
         const full = path.join(dir, ent.name);
         let real;
         try {
-          real = fs.realpathSync(full);
+          real = realpathNative(full);
           if (!isWithinRoot(skillReal, real)) continue;
         } catch { continue; }
         const st = fs.statSync(real);
@@ -164,7 +165,7 @@ export function findSkillUserPathLeaks(skillReal, rawMd) {
       }
     }
     try {
-      const refsReal = fs.realpathSync(refsDir);
+      const refsReal = realpathNative(refsDir);
       if (isWithinRoot(skillReal, refsReal) && fs.statSync(refsReal).isDirectory()) {
         walkRefs(refsReal, 0);
       }
@@ -192,7 +193,7 @@ export function runGate(opts = {}) {
   if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) {
     return { exitCode: 1, error: `Skill directory not found: ${opts.skillDir}` };
   }
-  const skillReal = fs.realpathSync(abs);
+  const skillReal = realpathNative(abs);
   const mdPath = path.join(skillReal, 'SKILL.md');
   if (!fs.existsSync(mdPath)) {
     return {
@@ -238,7 +239,7 @@ export function runGate(opts = {}) {
     if (!fs.existsSync(resolved)) {
       linkErrors.push(`Missing link target: ${target}`);
     } else {
-      const realT = fs.realpathSync(resolved);
+      const realT = realpathNative(resolved);
       if (!isWithinRoot(skillReal, realT)) linkErrors.push(`Escaping relative link: ${target}`);
     }
   }
@@ -350,7 +351,7 @@ export function runGate(opts = {}) {
 
   // Gate 6: Opt-in mirror symlink parity check (--check-mirror <dir>)
   const globalSkillsPath = path.join(os.homedir(), '.agents', 'skills');
-  const globalSkillsRoot = fs.existsSync(globalSkillsPath) ? fs.realpathSync(globalSkillsPath) : null;
+  const globalSkillsRoot = fs.existsSync(globalSkillsPath) ? realpathNative(globalSkillsPath) : null;
   const insideGlobal = Boolean(globalSkillsRoot && isWithinRoot(globalSkillsRoot, skillReal));
   let symlinkCheck = { checked: false };
   if (opts.checkMirror) {
@@ -360,7 +361,7 @@ export function runGate(opts = {}) {
     let pointsToSkill = false;
     if (exists) {
       try {
-        pointsToSkill = fs.realpathSync(mirror) === skillReal;
+        pointsToSkill = realpathNative(mirror) === skillReal;
       } catch { pointsToSkill = false; }
     }
     symlinkCheck = { checked: true, mirror_exists: exists, points_to_skill: pointsToSkill, mirror_path: mirror };

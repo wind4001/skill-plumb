@@ -513,23 +513,42 @@ try {
     commitAll(d, 'add files', isolatedGitEnv);
 
     const lockedPath = path.join(d, 'locked.txt');
+    const isUnreadable = (p) => {
+      try {
+        fs.readFileSync(p);
+        return false;
+      } catch {
+        return true;
+      }
+    };
     let lockedOk = false;
     if (process.platform === 'win32') {
       const user = process.env.USERNAME || '';
       if (user) {
         const deny = spawnSync('icacls', [lockedPath, '/deny', `${user}:(R)`], { encoding: 'utf8' });
         if (deny.status === 0) {
-          lockedOk = true;
           aclRestores.push(() => {
             spawnSync('icacls', [lockedPath, '/remove:d', user], { encoding: 'utf8' });
             spawnSync('icacls', [lockedPath, '/reset'], { encoding: 'utf8' });
           });
+          lockedOk = isUnreadable(lockedPath);
+        }
+      }
+      if (!lockedOk) {
+        const denyEveryone = spawnSync('icacls', [lockedPath, '/inheritance:r', '/deny', '*S-1-1-0:(R)'], { encoding: 'utf8' });
+        if (denyEveryone.status === 0) {
+          aclRestores.push(() => {
+            spawnSync('icacls', [lockedPath, '/remove:d', '*S-1-1-0'], { encoding: 'utf8' });
+            spawnSync('icacls', [lockedPath, '/inheritance:e'], { encoding: 'utf8' });
+            spawnSync('icacls', [lockedPath, '/reset'], { encoding: 'utf8' });
+          });
+          lockedOk = isUnreadable(lockedPath);
         }
       }
     } else {
       fs.chmodSync(lockedPath, 0o000);
-      lockedOk = true;
       aclRestores.push(() => fs.chmodSync(lockedPath, 0o644));
+      lockedOk = isUnreadable(lockedPath);
     }
 
     const r = runAll([d], isolatedGitEnv);
@@ -539,7 +558,7 @@ try {
     ok(reasons.includes('docs/bad_utf8.md') && reasons.includes('invalid_utf8'), 'recorded invalid UTF-8 .md');
     ok(reasons.includes('big.txt') && reasons.includes('file_too_large'), 'recorded >512KB file');
     if (lockedOk) {
-      ok(reasons.includes('locked.txt') && reasons.includes('read_failed'), 'recorded unreadable file');
+      ok(reasons.includes('locked.txt') && (reasons.includes('read_failed') || reasons.includes('stat_failed')), 'recorded unreadable file');
     }
   });
 

@@ -72,6 +72,10 @@ function sanitizeSnippet(line) {
     .slice(0, 140);
 }
 
+function realpathNative(p) {
+  return typeof fs.realpathSync.native === 'function' ? fs.realpathSync.native(p) : fs.realpathSync(p);
+}
+
 function isWithinLexical(absPath, rootDir) {
   const rel = path.relative(rootDir, absPath);
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
@@ -80,7 +84,7 @@ function isWithinLexical(absPath, rootDir) {
 function resolveSafeRepoFile(refSpec, baseDir, rootDir) {
   let rootReal;
   try {
-    rootReal = fs.realpathSync(rootDir);
+    rootReal = realpathNative(rootDir);
   } catch (e) {
     return { ok: false, reason: `ROOT_REALPATH_ERROR: ${e.code || e.message}` };
   }
@@ -95,7 +99,7 @@ function resolveSafeRepoFile(refSpec, baseDir, rootDir) {
   }
   let targetReal;
   try {
-    targetReal = fs.realpathSync(candidateAbs);
+    targetReal = realpathNative(candidateAbs);
   } catch (e) {
     return { ok: false, reason: `UNRESOLVABLE_REF_LINK: ${refSpec} (${e.code || e.message})` };
   }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -101,6 +101,36 @@ try {
   assert.equal(selfAudit.facts.links.findings_count, 0);
   const nonTestPathFindings = selfAudit.facts.paths_ports.findings.filter((f) => !f.is_test_or_fixture);
   assert.equal(nonTestPathFindings.length, 0, `Unexpected prod path findings: ${JSON.stringify(nonTestPathFindings)}`);
+
+  // 7. Windows 8.3 short-path regression check (RUNNER~1 vs runneradmin)
+  if (process.platform === 'win32') {
+    const longRepo = path.join(tmp, 'runneradmin_shortpath_test');
+    fs.mkdirSync(path.join(longRepo, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(longRepo, 'README.md'), '# Short Path Test\n', 'utf8');
+    fs.writeFileSync(path.join(longRepo, 'docs', 'guide.md'), '# Guide\n\nSee [Root](../README.md).\n', 'utf8');
+    execFileSync('git', ['init', '-q'], { cwd: longRepo });
+    execFileSync('git', ['config', '--local', 'user.name', 'Test User'], { cwd: longRepo });
+    execFileSync('git', ['config', '--local', 'user.email', '12345+test@users.noreply.github.com'], { cwd: longRepo });
+    execFileSync('git', ['add', '-A'], { cwd: longRepo });
+    execFileSync('git', ['commit', '-qm', 'init'], { cwd: longRepo });
+    fs.writeFileSync(path.join(longRepo, '.env'), 'FOO=bar\n', 'utf8');
+
+    const psRes = spawnSync(
+      'powershell',
+      ['-NoProfile', '-Command', `(New-Object -ComObject Scripting.FileSystemObject).GetFolder('${longRepo.replace(/'/g, "''")}').ShortPath`],
+      { encoding: 'utf8' }
+    );
+    const shortRepo = (psRes.stdout || '').trim();
+    if (psRes.status === 0 && shortRepo && shortRepo.includes('~') && shortRepo.toLowerCase() !== longRepo.toLowerCase()) {
+      const shortAudit = await runAuditAll({ target: shortRepo, noHistory: true });
+      assert.equal(shortAudit.facts.git.is_subdir, false, '8.3 short path should match repo_root');
+      assert.equal(shortAudit.facts.links.findings_count, 0, `8.3 short path links should pass: ${JSON.stringify(shortAudit.facts.links.findings)}`);
+      assert.ok(
+        shortAudit.facts.secrets.findings.some((f) => f.kind === 'untracked_unignored_sensitive_file' && f.file === '.env'),
+        '8.3 short path should catch untracked .env'
+      );
+    }
+  }
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
